@@ -1,14 +1,27 @@
-# Android 4.4 WebView 终端
+# Android 机顶盒独立客户端
 
-## 当前交付模式
+## 运行方式
 
-工程：`apps/terminal/android`，包名 `com.liteshop.terminal`，minSdk 19。
+工程：`apps/terminal/android`，包名 `com.liteshop.terminal`，minSdk 19（Android 4.4）。机顶盒作为门店唯一主机，HDMI 接显示器，USB 接键鼠和外设。
 
-APK 内置与浏览器相同的 Web UI，通过 JavaScript Bridge 连接门店电脑运行的 Python/SQLite 本地服务。**本阶段不在 Android 上运行 Python 或 SQLite 业务内核，因此不是 Android 单机独立记账版。** 断外网不影响局域网营业；本地服务或局域网中断时只能查看已载入页面并等待恢复。完整单机模式需要后续原生 Repository/UseCase 移植。
+APK 内置 Web UI；`MainActivity.TerminalBridge.request()` 在有界单线程队列中调用 `LocalStore`，使用 Android 原生 `SQLiteOpenHelper`。没有门店电脑地址、终端密钥或 Python 运行依赖，网络断开可继续营业。
+
+本机数据库是 `Context.getDatabasePath("liteshop.db")`，通常为 `/data/data/com.liteshop.terminal/databases/liteshop.db`。页面缓存和待确认请求也在本机应用私有空间。启动自动初始化门店、设备、店主、储值卡及次卡；重启不会重建已有账本。应用卸载或清除数据会删除本机数据；备份恢复尚未实现。
+
+## 账本实现
+
+- Android 与 Python 开发参考实现共用 `001_initial.sql`，构建时打入 APK。
+- 启用外键和 FULL 同步，schema 升级必须有显式迁移，禁止自动删库重建。
+- 每个业务命令在一个 SQLite 事务中写入业务行、追加流水/操作日志、`sync_event` 和 `command_receipt`。
+- 相同请求编号和参数重试返回首次结果，参数不同返回 `IDEMPOTENCY_CONFLICT`；JSON 字段排列不影响指纹。
+- 余额与次数、卡类型、过期/停用、累计退款上限、积分不足及资料版本均在事务内检查。
+- 数据库错误或响应丢失保留待确认请求；业务明确拒绝返回 `error.definitive=true`。
+- outbox 未配置时本地累积；配置云端后独立网络线程每 30 秒上传最多 100 条，完整确认后标记 SYNCED，失败保留原事件重试。
+- 当前默认操作人为店主，员工身份验证和权限管理待实现。
 
 ## 构建和安装
 
-需要 JDK 17、Gradle 8.9、Android SDK Platform 35 和对应构建工具。可用 Android Studio 打开该目录并配置 SDK，或设置 ANDROID_HOME：
+需要 JDK 17、Gradle 8.9、Android SDK Platform 35 与对应构建工具。设置 `ANDROID_HOME` 后：
 
 ```powershell
 cd E:\code\liteshop\apps\terminal\android
@@ -16,46 +29,47 @@ gradle --no-daemon assembleDebug lintDebug
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
-当前不包含 Gradle Wrapper 二进制；请使用固定版本 Gradle 8.9。AGP 固定为 8.7.3；构建前 `syncWebAssets` 自动复制 `apps/web/public` 下三个资源文件到 build 目录，避免维护两份页面。首次构建需要联网下载工具依赖，安装后页面资源无需联网。
+AGP 固定为 8.7.3；工程不附带 Gradle Wrapper。`syncWebAssets` 自动复制共用 Web 资源与 SQL schema，安装后不联网取资源。targetSdk 28 用于旧设备侧载验收，非应用商店发布配置。GitHub Actions 提供 `liteshop-terminal-debug` 构建产物。
 
-GitHub Actions 的 Validate 工作流也会执行 Android 构建与 lint，并在成功后提供 `liteshop-terminal-debug` APK artifact。targetSdk 暂为 28，用于旧设备侧载验收；不是应用商店发布包。
+## 使用
 
-## 连接
+1. 连接 HDMI 显示器和 USB 键鼠，安装并打开 APK。
+2. 工作台显示「本地账本已连接」，新增会员、开卡并进行交易。
+3. F2 定位搜索框，输入姓名、手机号或会员号后 Enter；HID 扫码枪扫描对应内容并发送 Enter。
+4. 不确定结果显示「重试原请求」，始终使用原编号确认结果。
+5. 可重载页面；「数据位置」展示设备上的存储路径。
+6. 「云端同步」配置可达服务地址及终端令牌；留空地址关闭同步。见 [部署与联调](CLOUD_DEPLOYMENT.md)。
 
-1. 按 [本地 Web 启动说明](LOCAL_WEB_UI.md) 启动服务并设置固定密钥。
-2. 设备和门店电脑连接同一可信局域网。
-3. 点击 APK 顶部「连接设置」，填写如 `http://192.168.1.10:8765` 与密钥。不要把 0.0.0.0 当作连接地址。模拟器连接宿主机可用 `http://10.0.2.2:8765`。
-4. 保存后，工作台显示「本地服务已连接」。新建会员、开卡、充值、消费并核对流水。
-5. 启动异常可点击「重载页面」，连接异常可修改设置后重试原请求。
+旧版 0.2 的电脑数据库不会自动导入 APK，新版本启动独立本机账本。已有真实数据迁移需要后续导入工具和校验，不应误认为升级 APK 已迁移电脑数据。
 
-地址仅允许 HTTP 私有 IPv4、回环 IPv4 或 localhost，不接受路径、用户信息或重定向。HTTP 只适用于可信门店内网；未实现公网 TLS 接入与证书管理。
+## Bridge v2
 
-## Bridge 契约 v1
-
-仅内置受控页面可用 `window.LiteShopTerminal`。普通浏览器自动使用 XMLHttpRequest。
-
-| 方法 | 当前行为 |
+| 方法 | 行为 |
 | --- | --- |
-| getTerminalInfo() | 同步 JSON：platform、api、androidVersion、model、bridgeVersion |
-| reportReady(payload) | 页面启动报告，最大 512 字符，更新原生状态栏 |
-| request(id, method, path, body) | 异步 GET/POST，只允许本地 API 白名单；网络线程执行，有限队列与超时 |
-| window.LiteShopReceive(id, status, jsonText) | 原生通过 evaluateJavascript 返回请求结果 |
-| requestBackup() | 预留；返回 NOT_IMPLEMENTED，不伪报成功 |
-| requestPrint(payload) | 预留；返回 NOT_IMPLEMENTED，不伪报成功 |
+| getTerminalInfo() | platform、api、androidVersion、model、storage=ANDROID_SQLITE、bridgeVersion=2 |
+| reportReady(payload) | 更新页面就绪状态，最多 512 字符 |
+| request(id, method, path, body) | 异步 GET/POST 白名单；直接访问本机 SQLite |
+| window.LiteShopReceive(id, status, jsonText) | 原生回调 JSON 结果 |
+| requestBackup() | 返回 NOT_IMPLEMENTED |
+| requestPrint(payload) | 返回 NOT_IMPLEMENTED，USB 驱动和队列待实现 |
 
-页面从合成同源地址 `http://liteshop.invalid` 载入，所有静态资源由 WebViewClient 从 APK assets 返回，不进行 DNS 请求。其余资源和外部导航被拦截。关闭 file/content 访问、多窗口和任意页面跳转；密钥仅由原生 HTTP 请求附加。API 不通过 shouldInterceptRequest 转发，因为 API 19 无法从该回调读取 POST body。
+请求路径沿用 [本地 API](LOCAL_WEB_UI.md)，Bridge 中省略 `/api/v1/`。Android 不暴露 HTTP 记账端口，也不要求浏览器测试密钥。
 
-待确认交易持久保存在 WebView localStorage。切换门店地址前检查待确认交易，避免把原交易发给另一门店。密钥可在原地址更新以恢复认证。
+合成地址 `http://liteshop.invalid` 仅用于 WebView 同源页面标识，资源由 APK assets 拦截返回；不是局域网或云端服务器。非白名单资源与外部导航被拦截，file/content 访问关闭。业务数据由 SQLite 保存，localStorage 仅用于待确认请求等页面状态。
 
-## 验收清单与未完成项
+## 验证与未完成项
 
-- [ ] Android 4.4/API 19 真机安装、横屏及键鼠/扫码枪验收。
-- [ ] 在至少一个较新 Android 版本重复核心交易流程。
-- [ ] 断外网仍能通过局域网查询、充值、消费；关闭本地服务后明确失败并可重试。
-- [ ] 模拟响应丢失、重载页面/重启 APK，验证原 request_id 只记一笔。
-- [ ] 非白名单 URL、外部跳转和 file/content 资源无法载入。
-- [ ] 低内存、终端重启和长时间使用验证。
+```powershell
+gradle --no-daemon connectedDebugAndroidTest
+```
 
-本次开发环境未提供 Java/Gradle/Android SDK，不能以代码静态检查替代 APK 编译或 Android 4.4 真机验收。CI 构建结果以 GitHub 工作流为准。
+原生测试覆盖初始化、储值/次卡交易、退款上限、积分、版本冲突、失败回滚、重复提交以及关闭数据库后重新打开；HTTP 同步测试检查 event_id 映射、缺失回执保留待同步事件及确认后重启持久化。自动化不替代断电和 USB 实机测试。
 
-后续仍需：原生单机内核、开机自启、设备所有者/Kiosk 锁定、备份恢复、打印驱动、扫码设备专项适配及可靠云同步。当前横屏 WebView 外壳不宣称完整 Kiosk 管理能力。
+- [ ] Android 4.4 真机安装、横屏、HDMI 分辨率和键鼠验收。
+- [ ] 拔网线/关闭 Wi-Fi 后完成完整营业流程。
+- [ ] 强制结束进程、重启机顶盒后读取原数据及恢复待确认请求。
+- [ ] 低内存、断电恢复、长期使用及较新 Android 版本兼容性。
+- [ ] 实际 USB 扫码枪及打印机型号验证。
+- [ ] 备份恢复、USB 打印驱动、自动启动、Kiosk 和云端下载。
+
+当前开发机无可用 JDK/Android SDK；APK 编译和设备测试结果以 CI 实际运行为准，尚不能宣称真机验收通过。

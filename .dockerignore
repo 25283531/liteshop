@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+**/*.sqlite*
+**/*.db
+**/*.jks
+**/*.keystore
+**/build
+data
+.gradle

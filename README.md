@@ -1,115 +1,103 @@
 # LiteShop
 
-LiteShop 是一个面向小型门店的本地优先会员业务系统。它把低成本 Android 终端、SQLite 本地数据和可选云服务组合起来，让门店在断网时仍能完成会员查询、充值、消费和积分操作。
+LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店唯一主机，替代电脑**：HDMI 接显示器，USB 接键盘、鼠标、扫码枪和打印机。应用、文件与营业数据保存在机顶盒，断网仍可完成会员查询、开卡、充值、消费、退款、扣次和积分操作。
 
-项目定位来自产品设计讨论：先做一个轻量、可离线运行的通用会员内核，再通过行业插件和云端服务扩展到美容、洗车、健身、培训等场景。
-
-## 目标
-
-- **本地优先**：没有网络也能正常营业；云端是可选能力。
-- **账本可追溯**：充值、消费、退款、扣次和积分都产生流水，不直接覆盖历史事实。
-- **同步可恢复**：本地业务提交和 `sync_event` 在同一个事务中完成，网络恢复后通过幂等事件同步。
-- **兼容旧设备**：终端 UI 控制包体和浏览器特性，目标兼容 Android 4.4（API 19）及以上 WebView。
-- **通用内核**：会员、卡、交易、积分、预约和员工能力放在 Core，行业差异通过插件扩展。
-- **数据可迁移**：支持本地备份/恢复，为后续云端绑定和换机保留路径。
-
-## 当前状态
-
-当前已实现 SQLite 交易核心、本地 Web 工作台及 Android 4.4 WebView 接入工程。Web 可直接运行；Android 内置页面并连接门店电脑上的本地服务，独立 Android 记账内核尚未实现。整体状态见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
-
-## 预期架构
+## 架构
 
 ```text
-┌──────────────────────────────────────────┐
-│              可选云端服务                 │
-│  账号 / 备份 / 同步 / 微信查询 / 预约通知   │
-└────────────────────┬─────────────────────┘
-                     │ Event-based Sync
-┌────────────────────▼─────────────────────┐
-│             LiteShop Terminal             │
-│  Local Web UI → Use Cases → Repository    │
-│                    │                      │
-│                 SQLite                   │
-│       transaction + sync_event ledger     │
-└───────────┬───────────────┬──────────────┘
-            │               │
-       USB 键鼠/扫码枪    网络打印/备份
+                 微信小程序（客户端待实现）
+                            │
+                    Cloud API（Docker）
+                       只读数据投影
+                            ▲
+                 Event Sync / 幂等上传
+              ┌─────────────┴─────────────┐
+         Terminal A                 Terminal B
+        安卓机顶盒 APK              安卓机顶盒 APK
+         本机 SQLite                 本机 SQLite
+         本地交易账本                本地交易账本
 ```
 
-首版建议采用清晰分层：
+各终端内置 Web UI，通过原生 Bridge 调用 LocalStore；HDMI 接显示器，USB 接键鼠和外设。A/B 各自拥有独立的门店、设备 ID 和账本，不能通过云端覆盖另一终端的财务数据。目前实现向云端上传，下载游标及跨终端业务协同尚未实现。详细核查见 [架构与实现边界](ARCHITECTURE.md)。
 
-```text
-UI → UseCase → Repository → SQLite
-                 └──────→ Sync Queue
+机顶盒 SQLite 是门店营业的唯一事实源；余额与次数可由追加式流水重建。云端故障或外网断开不会阻塞本地交易。微信小程序只能通过云端访问已同步数据，不能直接修改本地余额、积分或次数。
+
+## 当前状态（0.3.0）
+
+- APK 内置 HTML/CSS/ES5 工作台，通过原生桥直接读写本机 SQLite，无需门店电脑、Python 服务或局域网连接配置。
+- 支持会员创建/编辑/停用、储值卡/次卡、充值/消费/退款/扣次、积分、流水查询及版本校验。
+- 每次业务操作将数据、操作日志、幂等回执和同步事件在同一事务内提交，失败回滚；不确定结果保留原请求重试。
+- 数据库位于应用私有目录的 `databases/liteshop.db`，关闭应用、重启机顶盒后保留；卸载应用或清除应用数据会删除账本。
+- 键鼠及 HID 扫码枪走 Android 标准输入，F2 定位会员搜索框。
+- Cloud API 已实现批量事件幂等接收、顺序校验、会员/卡/积分投影和内部只读查询；终端配置后每 30 秒后台上传，失败保留事件重试。
+- 云端下载、备份恢复、USB 打印驱动及打印队列、自启/Kiosk、微信登录及小程序客户端尚未实现。备份和打印 Bridge 明确返回 `NOT_IMPLEMENTED`。
+- Android 实机与外设验收仍待完成，构建和自动化测试说明见下文。
+
+详细进度见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
+
+## 云端 Docker 与 GitHub 构建
+
+在云端服务器的仓库根目录执行（Bash）：
+
+```bash
+export LITESHOP_TERMINAL_TOKEN="$(openssl rand -hex 32)"
+export LITESHOP_MINIAPP_TOKEN="$(openssl rand -hex 32)"
+docker compose -f apps/cloud/docker-compose.yml up -d --build
+curl http://127.0.0.1:8787/healthz
 ```
 
-业务层不直接依赖 SQL，方便未来把本地实现和云端实现组合起来。
+请保存两枚令牌用于后续重启；终端顶部「云端同步」填写服务地址和终端令牌。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。目前共享令牌只适用于受控联调，微信正式登录和按设备授权尚待实现，小程序端不得持有内部读取令牌。
 
-## 首版范围（MVP）
+- [Validate 工作流](https://github.com/25283531/liteshop/actions/workflows/ci.yml)：Python、浏览器、APK 构建、lint、API 19/28 模拟器测试；下载产物 `liteshop-terminal-debug` 获取 APK。
+- [Cloud API 工作流](https://github.com/25283531/liteshop/actions/workflows/cloud.yml)：云端测试、Compose 校验、Docker 镜像构建及容器健康检查。当前构建验证，不推送镜像仓库。
 
-1. 门店和设备基础信息
-2. 会员新增、编辑、搜索、停用
-3. 卡类型与会员卡（储值卡、次卡）
-4. 充值、消费、退款、扣次和人工调整
-5. 交易明细与余额校验
-6. 积分账户和积分流水
-7. 员工/操作记录
-8. 本地同步事件队列、重试和幂等键
-9. JSON/SQLite 备份与恢复
-10. 适配大屏和键鼠操作的轻量 Web UI
+## 机顶盒安装与使用
 
-Android APK 外壳工程已提供；云端 API、微信小程序客户端、行业插件和网络打印属于后续阶段，详见开发计划。微信小程序 API 的路径、鉴权、只读边界和预约契约已记录在 [微信小程序 API 预留说明](docs/API_WECHAT_MINIPROGRAM.md)。
+按 [Android 构建及验收说明](docs/ANDROID_TERMINAL.md) 构建或从 GitHub Actions 下载调试 APK，安装后直接启动。首次打开自动建立门店、设备、店主和两种卡类型；当前操作人固定为初始化店主，员工登录和权限尚待实现。顶部「数据位置」可查看本机数据库路径。
 
-## 核心数据原则
+硬件接线、HID 扫码和打印适配边界见 [机顶盒与外设](docs/HARDWARE.md)。调试 APK 用于验收，正式营业还需备份恢复和实机稳定性验证。
 
-- 金额使用整数分，禁止使用浮点数保存金额。
-- 所有实体使用 UUID/ULID，避免多设备离线创建时发生主键冲突。
-- `member_card.balance` 是快速查询缓存；最终事实来自交易账本。
-- 充值、消费、退款和调整必须记录 `balance_before`、`amount`、`balance_after`。
-- 本地业务变更和对应 `sync_event` 必须在同一个 SQLite transaction 中提交。
-- 云端按 `event_id` 幂等处理，重复上传只返回首次处理结果。
-- 财务交易采用追加事件，不能通过云端覆盖本地余额。
+## 本地开发与验证
 
-## 本地开发
+电脑仅用于开发、构建和测试，不参与门店运行。Python 3.11+ 参考实现可在普通浏览器预览 UI：
 
-需要 Python 3.11+，不依赖 Python 第三方包。在仓库根目录运行：
+```powershell
+python -m apps.web.server --shop-name "开发测试门店"
+```
 
-    python -m apps.web.server --shop-name "我的门店"
+打开 http://127.0.0.1:8765 并输入控制台测试密钥。此工具数据库为 `data/liteshop.sqlite`，与机顶盒数据库相互独立，不自动迁移或同步。
 
-打开 http://127.0.0.1:8765 ，输入控制台显示的终端访问密钥。默认数据库为 data/liteshop.sqlite，重新启动保留业务数据。
+```powershell
+python -m unittest discover -s tests -v
+node --check apps/web/public/app.js
+node tests/browser_smoke.cjs
+```
 
-工作台支持会员搜索/编辑、储值卡/次卡、充值/消费/扣次/退款、积分及最近流水。Android 加载 APK 内置页面，通过受限原生桥连接门店局域网服务。
+浏览器测试依赖安装方法见 [Web UI 与接口说明](docs/LOCAL_WEB_UI.md)。Android 原生数据库测试位于 `app/src/androidTest`，使用 `gradle connectedDebugAndroidTest` 在模拟器或设备运行；GitHub Actions 配置构建、lint 及模拟器测试。
 
-- [本地 Web 与 API 使用说明](docs/LOCAL_WEB_UI.md)
-- [Android 4.4 构建、接入与验收](docs/ANDROID_TERMINAL.md)
-- [微信小程序 API 预留契约](docs/API_WECHAT_MINIPROGRAM.md)
-- [变更记录](CHANGELOG.md)
+## 数据与接口原则
 
-运行验证：
+- 金额为整数分，积分和次数为整数，禁止浮点记账。
+- UUID 标识实体，交易、积分和审计流水只追加；退款关联原消费并限制累计可退数量。
+- 请求回执、业务变更、同步事件同事务提交；同一请求编号不得用于不同操作。
+- 云端按事件 ID 幂等接收，逐条回执确认；游标下载、备份和换机恢复后续实现。
+- [微信小程序 API 契约](docs/API_WECHAT_MINIPROGRAM.md) 单独预留登录、会员绑定、只读卡包/余额/积分/流水和预约接口。
+- [数据字典](docs/DATA_MODEL.md) / [变更记录](CHANGELOG.md)。
 
-    python -m unittest discover -s tests -v
-    node --check apps/web/public/app.js
-
-测试涵盖账本、积分、退款回滚、幂等重试、HTTP 鉴权、并发请求和重启持久化。Android APK 编译及真机验收情况见终端文档；GitHub Actions 配置了 APK 构建和 lint。
-
-## 目录结构
+## 目录
 
 | 目录 | 内容 |
 | --- | --- |
-| apps/web | Python 本地 API、HTML/CSS/ES5 工作台 |
-| apps/terminal/android | API 19 WebView 外壳、原生 Bridge |
-| liteshop/core | 会员、卡、交易和积分用例 |
-| liteshop/storage | SQLite schema、migration、repository |
-| tests | 核心及 HTTP 工作流测试 |
-| docs | 数据字典、API 契约、使用与开发计划 |
-
-![本地工作台](docs/screenshots/web-workspace.png)
+| apps/terminal/android | 独立 Android 客户端、原生 SQLite、Bridge、设备测试 |
+| apps/web | APK 共用的 Web UI，以及开发用 Python HTTP 服务 |
+| apps/cloud | 云端事件接收、只读投影、Docker 与 Compose |
+| liteshop/core | Python 参考业务实现 |
+| liteshop/storage | Android 与 Python 共用 SQL schema、Python 数据层 |
+| tests | Python 核心/HTTP 与浏览器测试 |
+| docs | 架构、计划、API、硬件与验收说明 |
 
 ## 许可证与商业授权
 
-个人、教育、评估和非商业内部使用免费。商用部署、销售、托管、集成付费产品或以本项目产生收入，必须先取得版权方书面商业授权。完整条款见 [LICENSE](LICENSE)。引入第三方代码时必须记录来源、版本和许可证，不能将第三方项目的许可证替换为本项目条款。
+个人、教育、评估和非商业内部使用免费。商用部署、销售、托管、集成付费产品或以本项目产生收入，必须先取得版权方书面商业授权。完整条款见 [LICENSE](LICENSE)。第三方代码保留原有许可证。
 
-## 远程仓库
-
-<https://github.com/25283531/liteshop>
-
+远程仓库：<https://github.com/25283531/liteshop>

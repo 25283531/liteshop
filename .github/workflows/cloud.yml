@@ -1,0 +1,52 @@
+name: Cloud API
+on:
+  push:
+    paths: ['apps/cloud/**', 'tests/test_cloud.py', 'pyproject.toml', '.dockerignore', '.github/workflows/cloud.yml']
+  pull_request:
+    paths: ['apps/cloud/**', 'tests/test_cloud.py', 'pyproject.toml', '.dockerignore', '.github/workflows/cloud.yml']
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cloud API regression tests
+        run: python -m unittest discover -s tests -p test_cloud.py -v
+      - name: Validate Compose configuration
+        run: docker compose -f apps/cloud/docker-compose.yml config --quiet
+        env:
+          LITESHOP_TERMINAL_TOKEN: ci-terminal-token-12345678901234567890
+          LITESHOP_MINIAPP_TOKEN: ci-internal-reader-token-12345678901234
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/cloud/Dockerfile
+          push: false
+          load: true
+          tags: liteshop-cloud-api:ci
+      - name: Start image and verify Cloud API
+        shell: bash
+        run: |
+          docker run --detach --name liteshop-cloud-smoke \
+            --publish 127.0.0.1:18787:8787 \
+            --env LITESHOP_TERMINAL_TOKEN=ci-terminal-token-12345678901234567890 \
+            --env LITESHOP_MINIAPP_TOKEN=ci-internal-reader-token-12345678901234 \
+            liteshop-cloud-api:ci
+          trap 'docker logs liteshop-cloud-smoke; docker rm --force liteshop-cloud-smoke' EXIT
+          python - <<'PY'
+          import json, time, urllib.error, urllib.request
+          for attempt in range(20):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:18787/healthz', timeout=2) as response:
+                      assert json.load(response)['service'] == 'cloud-api'
+                  break
+              except (urllib.error.URLError, TimeoutError):
+                  if attempt == 19:
+                      raise
+                  time.sleep(1)
+          PY

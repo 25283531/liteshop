@@ -1,0 +1,15 @@
+services:
+  cloud-api:
+    build:
+      context: ../..
+      dockerfile: apps/cloud/Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      LITESHOP_TERMINAL_TOKEN: ${LITESHOP_TERMINAL_TOKEN:?set terminal token}
+      LITESHOP_MINIAPP_TOKEN: ${LITESHOP_MINIAPP_TOKEN:?set miniapp token}
+    volumes:
+      - cloud-data:/data
+    restart: unless-stopped
+volumes:
+  cloud-data:

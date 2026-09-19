@@ -7,7 +7,7 @@ license = {file = "LICENSE"}
 dependencies = []
 
 [tool.setuptools.packages.find]
-include = ["liteshop*", "apps", "apps.web"]
+include = ["liteshop*", "apps", "apps.web", "apps.cloud"]
 
 [tool.setuptools.package-data]
 "liteshop.storage" = ["migrations/*.sql"]

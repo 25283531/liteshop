@@ -1,6 +1,10 @@
 # 本地 Web 工作台
 
-## 启动（Python 3.11+）
+## 产品运行方式与开发预览
+
+门店使用机顶盒 APK：内置页面通过原生 Bridge 直接访问本机 SQLite，无需电脑和 HTTP 服务。以下 Python 服务仅为开发测试工具，与安卓数据库相互独立。
+
+## 开发预览（Python 3.11+）
 
 在仓库根目录运行，无须安装 Python 第三方依赖：
 
@@ -11,14 +15,7 @@ python -m apps.web.server --shop-name "我的门店"
 
 打开 http://127.0.0.1:8765 ，输入控制台显示的访问密钥。默认只监听本机，数据库保存在 `data/liteshop.sqlite`。重复启动沿用已有数据；`--shop-name` 只在首次创建数据库时生效。按 Ctrl+C 停止。可以用 `--db` 指定独立测试数据库。
 
-局域网终端接入时，设置一个至少 24 位的 ASCII 密钥并监听局域网：
-
-```powershell
-$env:LITESHOP_TOKEN = "请替换为至少24位随机ASCII字符"
-python -m apps.web.server --host 0.0.0.0 --port 8765
-```
-
-上面的中文是占位提示，不能直接作为密钥。请限制防火墙仅允许可信门店网段访问 TCP 8765。此版本是门店本地服务，HTTP 局域网通信不加密，不应映射到公网；员工账号、角色权限和 HTTPS 网关属于后续阶段。当前交易操作人沿用初始化时创建的 Owner。
+HTTP 测试服务默认仅监听本机；不要映射到公网。Android APK 不连接此服务。当前操作人为初始化 Owner，员工权限后续实现。
 
 ## 使用流程
 
@@ -29,19 +26,19 @@ python -m apps.web.server --host 0.0.0.0 --port 8765
 5. 积分填写正数增加、负数扣除，必须填写原因。
 6. 可编辑/停用会员，以及挂失/停用/恢复会员卡。详情显示最近 50 笔交易和积分流水。
 
-所有操作都调用原有 ShopService，账本与同步事件同事务写入。页面使用 HTML/CSS/ES5，无 CDN、fetch、Promise 或构建依赖。键盘 Tab/Enter、扫码枪键盘输入可用，弹窗支持 Escape 和焦点循环。
+Android 操作调用原生 LocalStore；浏览器开发预览调用 Python ShopService，账本与同步事件同事务写入。页面使用 HTML/CSS/ES5，无 CDN、fetch、Promise 或构建依赖。键盘 Tab/Enter、扫码枪 HID 键盘输入可用，F2 可定位会员搜索，弹窗支持 Escape 和焦点循环。
 
-## 连接中断与恢复
+## 中断与恢复
 
-- 断外网：门店本地服务正常时可继续营业；待同步事件累积，当前尚未实现云端上传。
-- 门店电脑关机/本地服务中断：界面仍能打开，暂停提交新交易，检查服务及局域网。
-- 请求超时或服务端 5xx：浏览器保存完整原请求和 request_id，显示「重试原请求」。重试沿用幂等键，避免服务器已记账但响应丢失时再次扣款。
-- 待确认请求保存在 localStorage，刷新或重启应用后仍可恢复。请先确认结果再清除浏览器数据、卸载 APK 或切换门店。同一工作台建议仅打开一个标签页。
-- 浏览器密钥只保存在 sessionStorage；Android 密钥保存在应用私有配置中，页面脚本不能读取。
+- 机顶盒断网：本机 SQLite 继续交易，待同步事件累积；当前云端上传尚未实现。
+- 本机数据库忙、磁盘错误或响应丢失：保留完整原请求及 request_id，修复后点击「重试原请求」，避免重复扣款。
+- 待确认请求保存在本机 WebView localStorage，账本与幂等回执保存在 SQLite。刷新或重启应用后可恢复确认；不要清除应用数据。
+- 浏览器开发预览依赖测试 HTTP 服务，停止该服务只影响浏览器预览，不影响机顶盒营业。
+- 浏览器测试密钥保存在 sessionStorage；APK 无需此密钥或服务器地址。
 
 ## 本地 API v1
 
-所有接口要求 `Authorization: Bearer <终端密钥>`，不提供跨域 CORS。返回 `{"ok":true,"data":...}` 或 `{"ok":false,"error":{"code":"...","message":"..."}}`。
+仅开发 HTTP 服务的接口要求 `Authorization: Bearer <终端密钥>`，不提供跨域 CORS。返回 `{"ok":true,"data":...}` 或 `{"ok":false,"error":{"code":"...","message":"..."}}`。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -56,9 +53,9 @@ python -m apps.web.server --host 0.0.0.0 --port 8765
 | POST /api/v1/commands/transact | request_id, card_id, kind, amount?, times?, source_id?, remark? |
 | POST /api/v1/commands/points | request_id, member_id, points, remark |
 
-POST 仅接受 JSON 对象（最多 16 KiB）。amount 为整数分；times/points 为整数；expire_at 为毫秒时间戳。同一 request_id 必须使用完全相同的参数。缺少或无效参数为 400，未认证为 401，跨站为 403，记录不存在为 404，幂等或版本冲突为 409，数据库暂不可用为 503。
+Android Bridge 使用下列路径并省略 /api/v1/，在本机执行且不开放 HTTP 端口。POST 仅接受 JSON 对象（HTTP 最多 16 KiB，原生桥最多 16384 字符）。amount 为整数分；times/points 为整数；expire_at 为毫秒时间戳。同一 request_id 必须使用完全相同的参数。缺少或无效参数为 400，未认证为 401，跨站为 403，记录不存在为 404，幂等或版本冲突为 409，数据库暂不可用为 503。
 
-**微信小程序 API 独立预留**：本地终端密钥不得发给微信会员端。本文件的写操作仅供门店终端使用；微信登录、会员绑定、只读余额/积分/卡包及预约遵循 [API_WECHAT_MINIPROGRAM.md](API_WECHAT_MINIPROGRAM.md)，本阶段未实现云端小程序接口。
+**微信小程序 API 独立预留**：开发测试密钥不得用于微信会员端。本文件的写操作仅供门店终端使用；微信登录、会员绑定、只读余额/积分/卡包及预约遵循 [API_WECHAT_MINIPROGRAM.md](API_WECHAT_MINIPROGRAM.md)，本阶段未实现云端小程序接口。
 
 ## 验证
 
@@ -71,7 +68,7 @@ node --check apps/web/public/app.js
 
 ### 可选浏览器验收
 
-本次已在 Windows Edge 无界面模式完成会员、开卡、充值消费退款、积分、800px 布局与原生桥模拟验证，并用 Acorn 按 ES5 语法解析脚本。实际 Android API 19 验收仍需真机。
+浏览器脚本在 Windows Edge 无界面模式验证会员、开卡、充值消费退款、积分、800px 布局与原生桥模拟验证，并用 Acorn 按 ES5 语法解析脚本。实际 Android API 19 验收仍需真机。
 
 运行可重复的验收脚本（测试数据使用独立临时数据库）：
 

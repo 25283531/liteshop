@@ -33,7 +33,7 @@
                 finish(errors[response.error.code] || response.error.message, null, response.error.definitive !== true);
             } else { finish(null, response.data, false); }
         }
-        function offline() { finish("本地服务连接中断，请检查门店电脑和局域网", null, true); }
+        function offline() { finish(bridge ? "设备本地数据库响应中断，请重载页面后重试原请求" : "开发服务连接中断，请检查测试服务", null, true); }
         if (bridge) {
             requestId = pageId + "-" + (++bridgeSequence);
             bridgeCallbacks[requestId] = receive;
@@ -53,12 +53,14 @@
     }
     function status() {
         api("GET", "status", null, function (error, data) {
-            el("connection").textContent = error ? "本地服务未连接" : "● 本地服务已连接";
+            el("connection").textContent = error ? "本地账本不可用" : "● 本地账本已连接";
             if (error) { notice(error, true); return; }
             el("login").hidden = true;
             el("shop-name").textContent = data.shop.name;
             el("member-count").textContent = data.member_count;
             el("event-count").textContent = data.pending_events;
+            var syncNames = {NOT_CONFIGURED: "未配置", SYNCING: "同步中", OFFLINE: "离线待同步", PENDING: "待同步", SYNCED: "已同步"};
+            el("cloud-sync").textContent = syncNames[data.cloud_sync] || "状态未知";
         });
     }
     function search() {
@@ -195,7 +197,7 @@
     }
     el("reconnect").onclick = connect;
     document.onkeydown = function (e) {
-        if (el("modal").hidden) { return; }
+        if (el("modal").hidden) { if (e.keyCode === 113) { el("search").focus(); el("search").select(); e.preventDefault(); } return; }
         if (e.keyCode === 27) { closeForm(); }
         if (e.keyCode === 9) {
             var list = el("modal").querySelectorAll("input,select,button"), first = list[0], last = list[list.length - 1];
@@ -205,7 +207,7 @@
     };
     try {
         state.pending = JSON.parse(localStorage.getItem("liteshop.pending") || "null");
-        if (bridge) { var info = JSON.parse(bridge.getTerminalInfo()); el("terminal-info").textContent = "Android " + info.androidVersion + " · " + info.model + " · 门店本地服务"; bridge.reportReady('{"version":"0.2.0"}'); }
+        if (bridge) { var info = JSON.parse(bridge.getTerminalInfo()); el("terminal-info").textContent = "Android " + info.androidVersion + " · " + info.model + " · 机顶盒本地账本"; bridge.reportReady('{"version":"0.3.0"}'); }
     } catch (error) { notice("终端状态读取失败，请重新连接", true); }
     pendingUI(); connect(); window.setInterval(status, 30000);
 }());
