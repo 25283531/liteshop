@@ -1,0 +1,10 @@
+[project]
+name = "liteshop"
+version = "0.1.0"
+description = "Local-first membership ledger"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["liteshop*"]
