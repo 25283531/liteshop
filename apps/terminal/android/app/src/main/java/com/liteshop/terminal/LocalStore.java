@@ -161,9 +161,11 @@ public final class LocalStore extends SQLiteOpenHelper {
             if (query.length() > 200 || !offset.matches("[0-9]{1,10}") || Long.parseLong(offset) > 2000000000L) {
                 reject("INVALID_INPUT", "查询参数超出范围");
             }
-            return rows(db, "SELECT * FROM member WHERE deleted_at IS NULL AND (instr(name,?)>0 OR "
-                + "instr(COALESCE(phone,''),?)>0 OR instr(member_no,?)>0) ORDER BY created_at,id LIMIT 50 OFFSET ?",
-                query, query, query, offset);
+            // API 19 ships SQLite 3.7.11, before instr() was introduced.
+            String pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+            return rows(db, "SELECT * FROM member WHERE deleted_at IS NULL AND (name LIKE ? ESCAPE '\\' OR "
+                + "COALESCE(phone,'') LIKE ? ESCAPE '\\' OR member_no LIKE ? ESCAPE '\\') ORDER BY created_at,id LIMIT 50 OFFSET ?",
+                pattern, pattern, pattern, offset);
         }
         if (path.startsWith("members/")) {
             String id = path.substring(8);

@@ -112,6 +112,9 @@ public class LocalStoreTest {
         assertEquals(3, detail.getJSONArray("transactions").length());
         assertEquals(1, detail.getJSONArray("points_transactions").length());
         assertEquals(1, ok("GET", "members?q=13800000000&offset=0", null).getJSONArray("data").length());
+        assertEquals(0, ok("GET", "members?q=%25&offset=0", null).getJSONArray("data").length());
+        assertEquals(0, ok("GET", "members?q=_&offset=0", null).getJSONArray("data").length());
+        assertEquals(0, ok("GET", "members?q=%5C&offset=0", null).getJSONArray("data").length());
         assertEquals(count("operation_log"), count("sync_event"));
     }
 

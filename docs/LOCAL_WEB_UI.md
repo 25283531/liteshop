@@ -30,7 +30,7 @@ Android 操作调用原生 LocalStore；浏览器开发预览调用 Python ShopS
 
 ## 中断与恢复
 
-- 机顶盒断网：本机 SQLite 继续交易，待同步事件累积；当前云端上传尚未实现。
+- 机顶盒断网：本机 SQLite 继续交易，待同步事件累积；配置 Cloud API 后网络恢复时按原事件 ID 后台重试上传。
 - 本机数据库忙、磁盘错误或响应丢失：保留完整原请求及 request_id，修复后点击「重试原请求」，避免重复扣款。
 - 待确认请求保存在本机 WebView localStorage，账本与幂等回执保存在 SQLite。刷新或重启应用后可恢复确认；不要清除应用数据。
 - 浏览器开发预览依赖测试 HTTP 服务，停止该服务只影响浏览器预览，不影响机顶盒营业。
@@ -55,7 +55,7 @@ Android 操作调用原生 LocalStore；浏览器开发预览调用 Python ShopS
 
 Android Bridge 使用下列路径并省略 /api/v1/，在本机执行且不开放 HTTP 端口。POST 仅接受 JSON 对象（HTTP 最多 16 KiB，原生桥最多 16384 字符）。amount 为整数分；times/points 为整数；expire_at 为毫秒时间戳。同一 request_id 必须使用完全相同的参数。缺少或无效参数为 400，未认证为 401，跨站为 403，记录不存在为 404，幂等或版本冲突为 409，数据库暂不可用为 503。
 
-**微信小程序 API 独立预留**：开发测试密钥不得用于微信会员端。本文件的写操作仅供门店终端使用；微信登录、会员绑定、只读余额/积分/卡包及预约遵循 [API_WECHAT_MINIPROGRAM.md](API_WECHAT_MINIPROGRAM.md)，本阶段未实现云端小程序接口。
+**微信小程序 API 独立预留**：开发测试密钥不得用于微信会员端。本文件的写操作仅供门店终端使用；微信登录、会员绑定、只读余额/积分/卡包及预约遵循 [API_WECHAT_MINIPROGRAM.md](API_WECHAT_MINIPROGRAM.md)。Cloud API 已实现内部会员投影查询骨架，正式微信登录和小程序客户端尚未实现。
 
 ## 验证
 
