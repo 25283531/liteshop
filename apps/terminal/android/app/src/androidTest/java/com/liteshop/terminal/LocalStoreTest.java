@@ -157,4 +157,3 @@ public class LocalStoreTest {
         try { assertFalse(foreignKeys.moveToFirst()); } finally { foreignKeys.close(); }
     }
 }
-
