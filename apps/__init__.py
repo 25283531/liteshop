@@ -1,0 +1,1 @@
+"""LiteShop applications."""

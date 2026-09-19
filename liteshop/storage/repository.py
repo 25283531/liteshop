@@ -67,6 +67,17 @@ class SQLiteRepository:
     def card_types(self):
         return [dict(r) for r in self.conn.execute("SELECT * FROM card_type ORDER BY mode")]
 
+    def terminal_status(self):
+        context = self.context()
+        return dict(shop=self.one("shop", context["shop_id"]),
+                    device=self.one("device", context["device_id"]),
+                    pending_events=self.conn.execute("SELECT COUNT(*) FROM sync_event WHERE status != 'SYNCED'").fetchone()[0],
+                    member_count=self.conn.execute("SELECT COUNT(*) FROM member WHERE deleted_at IS NULL").fetchone()[0],
+                    cloud_sync="NOT_CONFIGURED")
+
+    def points_ledger(self, member_id):
+        return [dict(r) for r in self.conn.execute("SELECT * FROM points_transaction WHERE member_id=? ORDER BY rowid DESC LIMIT 50", (member_id,))]
+
     def ledger(self, member_id, limit=50, offset=0):
         return [dict(r) for r in self.conn.execute("SELECT * FROM ledger_transaction WHERE member_id=? ORDER BY rowid DESC LIMIT ? OFFSET ?", (member_id, limit, offset))]
 

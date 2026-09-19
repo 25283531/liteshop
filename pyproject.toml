@@ -1,10 +1,14 @@
 [project]
 name = "liteshop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first membership ledger"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
 dependencies = []
 
 [tool.setuptools.packages.find]
-include = ["liteshop*"]
+include = ["liteshop*", "apps", "apps.web"]
+
+[tool.setuptools.package-data]
+"liteshop.storage" = ["migrations/*.sql"]
+"apps.web" = ["public/*.html", "public/*.css", "public/*.js"]

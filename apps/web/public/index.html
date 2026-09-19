@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LiteShop · 门店工作台</title><link rel="stylesheet" href="/app.css"></head>
+<body>
+<header><div class="brand">L<span>LiteShop</span></div><div class="header-right"><span id="connection">正在连接本地服务…</span><button id="reconnect" class="quiet">重新连接</button></div></header>
+<main>
+<div class="heading"><div class="eyebrow">门店工作台 / LOCAL WORKSPACE</div><h1 id="shop-name">每一笔生意，清楚记录。</h1><p id="terminal-info">本地记账 · 数据保存在门店</p></div>
+<div id="message" role="status" aria-live="polite"></div>
+<section id="login" class="panel" hidden><h2>连接本地服务</h2><p>输入服务启动时显示的终端访问密钥。</p><form id="login-form"><label for="token">访问密钥</label><input id="token" type="password" autocomplete="off" required><button type="submit">连接工作台</button></form></section>
+<div id="pending" class="panel warning" hidden><strong>有一笔操作等待确认</strong><p id="pending-description"></p><p>连接可能在提交后中断。请重试原请求，系统会核对结果，避免重复记账。</p><button id="retry">重试原请求</button></div>
+<div class="metrics"><div><span>会员总数</span><strong id="member-count">—</strong></div><div><span>待同步事件</span><strong id="event-count">—</strong></div><div><span>云端服务</span><strong class="small">未配置</strong><small>外网断开不影响本地服务</small></div></div>
+<div class="workspace">
+<section class="members panel"><div class="section-head"><h2>会员</h2><button id="new-member">＋ 新增</button></div><form id="search-form"><label for="search">姓名 / 手机号 / 会员号</label><div class="search-row"><input id="search" placeholder="输入后按 Enter" autocomplete="off"><button type="submit" class="secondary">查询</button></div></form><div id="member-list" class="member-list"><p class="empty">连接后即可查看会员</p></div><div class="pager"><button id="prev" class="quiet">上一页</button><span id="page">1</span><button id="next" class="quiet">下一页</button></div></section>
+<section class="detail panel"><div id="detail"><div class="empty large"><span class="empty-mark">L</span><h2>从一位会员开始</h2><p>在左侧查找会员，或新增第一位会员。<br>卡包、余额和每一笔流水都会在这里展示。</p></div></div></section>
+</div>
+<footer>LiteShop / 本地优先会员系统 <span>个人非商业使用免费 · 商用需授权</span></footer>
+</main>
+<div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="form-title"><div class="dialog"><h2 id="form-title"></h2><p id="form-context"></p><form id="action-form"><div id="fields"></div><p id="form-error" role="alert"></p><div class="dialog-actions"><button type="button" id="cancel" class="secondary">取消</button><button type="submit" id="submit">确认保存</button></div></form></div></div>
+<script src="/app.js"></script>
+</body></html>

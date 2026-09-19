@@ -15,7 +15,7 @@ LiteShop 是一个面向小型门店的本地优先会员业务系统。它把�
 
 ## 当前状态
 
-仓库当前已进入 Phase 1：SQLite 数据层和本地交易核心正在实现。整体边界与后续顺序见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
+当前已实现 SQLite 交易核心、本地 Web 工作台及 Android 4.4 WebView 接入工程。Web 可直接运行；Android 内置页面并连接门店电脑上的本地服务，独立 Android 记账内核尚未实现。整体状态见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
 
 ## 预期架构
 
@@ -58,7 +58,7 @@ UI → UseCase → Repository → SQLite
 9. JSON/SQLite 备份与恢复
 10. 适配大屏和键鼠操作的轻量 Web UI
 
-云端 API、微信小程序、Android APK 外壳、行业插件和网络打印属于后续阶段，详见开发计划。微信小程序 API 的路径、鉴权、只读边界和预约契约已记录在 [微信小程序 API 预留说明](docs/API_WECHAT_MINIPROGRAM.md)。
+Android APK 外壳工程已提供；云端 API、微信小程序客户端、行业插件和网络打印属于后续阶段，详见开发计划。微信小程序 API 的路径、鉴权、只读边界和预约契约已记录在 [微信小程序 API 预留说明](docs/API_WECHAT_MINIPROGRAM.md)。
 
 ## 核心数据原则
 
@@ -70,33 +70,40 @@ UI → UseCase → Repository → SQLite
 - 云端按 `event_id` 幂等处理，重复上传只返回首次处理结果。
 - 财务交易采用追加事件，不能通过云端覆盖本地余额。
 
-## 目录规划
-
-```text
-liteshop/
-├── apps/
-│   ├── terminal/          # Android/WebView 终端（后续阶段）
-│   ├── web/               # 本地 Web UI
-│   └── miniapp/           # 微信会员端（后续阶段）
-├── core/                  # 会员、卡、交易、积分、预约等业务内核
-├── storage/               # SQLite schema、migration、repository
-├── sync/                  # 事件协议、队列、上传、下载、冲突规则
-├── cloud/                 # 可选云端 API、认证、备份和通知
-├── industries/            # beauty、carwash、gym 等行业插件
-├── docs/                  # 架构、计划、数据字典和决策记录
-└── README.md
-```
-
 ## 本地开发
 
-项目会优先保持运行环境简单，首版以 Node.js/Python 标准库和 SQLite 为主，避免给旧终端引入不必要的运行时依赖。当前可以直接使用 Python 标准库运行核心测试：
+需要 Python 3.11+，不依赖 Python 第三方包。在仓库根目录运行：
 
-```powershell
-$env:PYTHONPATH = "."
-python -m unittest discover -s tests -v
-```
+    python -m apps.web.server --shop-name "我的门店"
 
-测试会在临时 SQLite 数据库中验证迁移、充值、消费、退款、积分、幂等和回滚。
+打开 http://127.0.0.1:8765 ，输入控制台显示的终端访问密钥。默认数据库为 data/liteshop.sqlite，重新启动保留业务数据。
+
+工作台支持会员搜索/编辑、储值卡/次卡、充值/消费/扣次/退款、积分及最近流水。Android 加载 APK 内置页面，通过受限原生桥连接门店局域网服务。
+
+- [本地 Web 与 API 使用说明](docs/LOCAL_WEB_UI.md)
+- [Android 4.4 构建、接入与验收](docs/ANDROID_TERMINAL.md)
+- [微信小程序 API 预留契约](docs/API_WECHAT_MINIPROGRAM.md)
+- [变更记录](CHANGELOG.md)
+
+运行验证：
+
+    python -m unittest discover -s tests -v
+    node --check apps/web/public/app.js
+
+测试涵盖账本、积分、退款回滚、幂等重试、HTTP 鉴权、并发请求和重启持久化。Android APK 编译及真机验收情况见终端文档；GitHub Actions 配置了 APK 构建和 lint。
+
+## 目录结构
+
+| 目录 | 内容 |
+| --- | --- |
+| apps/web | Python 本地 API、HTML/CSS/ES5 工作台 |
+| apps/terminal/android | API 19 WebView 外壳、原生 Bridge |
+| liteshop/core | 会员、卡、交易和积分用例 |
+| liteshop/storage | SQLite schema、migration、repository |
+| tests | 核心及 HTTP 工作流测试 |
+| docs | 数据字典、API 契约、使用与开发计划 |
+
+![本地工作台](docs/screenshots/web-workspace.png)
 
 ## 许可证与商业授权
 

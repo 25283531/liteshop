@@ -4,3 +4,12 @@ __pycache__/
 *.db
 .venv/
 .pytest_cache/
+
+data/
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore

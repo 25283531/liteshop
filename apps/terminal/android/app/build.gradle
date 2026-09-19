@@ -1,0 +1,21 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.liteshop.terminal'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.liteshop.terminal'
+        minSdk 19
+        targetSdk 28
+        versionCode 2
+        versionName '0.2.0'
+    }
+    // Legacy sideload terminal; Play Store target policy is not this artifact's release target.
+    lint { disable 'ExpiredTargetSdkVersion' }
+    sourceSets.main.assets.srcDirs = [layout.buildDirectory.dir('generated/webAssets')]
+}
+tasks.register('syncWebAssets', Sync) {
+    from '../../../web/public'
+    into layout.buildDirectory.dir('generated/webAssets')
+    include 'index.html', 'app.js', 'app.css'
+}
+tasks.named('preBuild').configure { dependsOn 'syncWebAssets' }

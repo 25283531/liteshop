@@ -1,0 +1,40 @@
+name: Validate
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check apps/web/public/app.js
+      - run: npm install --prefix "$RUNNER_TEMP/liteshop-validation" --no-save playwright acorn
+      - run: node "$RUNNER_TEMP/liteshop-validation/node_modules/playwright/cli.js" install --with-deps chromium
+      - run: node tests/browser_smoke.cjs
+        env:
+          LITESHOP_TEST_NODE_MODULES: ${{ runner.temp }}/liteshop-validation/node_modules
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: gradle --no-daemon assembleDebug lintDebug
+        working-directory: apps/terminal/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: liteshop-terminal-debug
+          path: apps/terminal/android/app/build/outputs/apk/debug/*.apk
