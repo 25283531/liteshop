@@ -2,13 +2,17 @@
 
 ## Docker 部署
 
-部署方式有两种：Cloudflare Workers + D1 适合无服务器托管；Debian/Ubuntu 一键脚本使用 Docker 运行 Python Cloud API。两者 API 路径和终端同步协议保持一致。
+云端服务统一使用 Docker 运行 Python Cloud API；API 路径和终端同步协议只有这一套实现。GitHub Actions 提供自动验证和手动镜像构建。
 
-## Cloudflare Workers + D1
+## GitHub Actions 手动构建镜像
 
-先在 Cloudflare Dashboard 创建名称为 `liteshop-cloud` 的 D1 数据库，再点击 README 或 [Workers 部署说明](../apps/cloud/workers/README.md) 中的部署按钮。部署向导中把 D1 binding `DB` 绑定到该数据库，并设置 `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` 两个 secret；按钮不会替用户生成令牌。部署脚本会自动执行 `migrations/0001_initial.sql` 初始化表结构，并检查 `/healthz`。
+打开 [手动构建 Cloud API 镜像](https://github.com/25283531/liteshop/actions/workflows/cloud-image.yml)，点击 **Run workflow**。默认只构建并验证镜像；如果需要发布到 GitHub Container Registry，勾选 `push_image`。发布时镜像地址为：
 
-按钮入口使用 GitHub 仓库根地址，根目录 Wrangler 配置会指向 `apps/cloud/workers` Worker 源码，避免 Cloudflare 对 monorepo 子目录 URL 的校验问题。如果部署向导仍不能完成部署，进入 `apps/cloud/workers` 按 Workers 说明中的 Wrangler 备用命令执行。Workers 版本使用 D1，不读取 Docker 的 `/data/cloud.sqlite`；从 Docker 迁移时需要重新上传未同步事件或制作专用数据迁移，不要直接把 SQLite 文件上传到 D1。
+```text
+ghcr.io/25283531/liteshop-cloud-api:<git-sha>
+```
+
+工作流使用 `GITHUB_TOKEN` 登录 GHCR，不需要在仓库中保存额外密码。服务器可以使用发布后的镜像，或直接从仓库源码执行 Compose 构建。
 
 ## Debian/Ubuntu 一键部署
 
@@ -66,6 +70,8 @@ curl http://127.0.0.1:8787/healthz
 
 ## GitHub 验证
 
-`.github/workflows/cloud.yml` 运行 Python 云端回归测试、Compose 配置检查、构建 Docker 镜像并启动容器检查 `/healthz`。当前 `push: false`，没有发布到 GHCR 或 Docker Hub；服务器通过仓库源码构建。
+`.github/workflows/cloud.yml` 运行 Python 云端回归测试、Compose 配置检查、构建 Docker 镜像并启动容器检查 `/healthz`。手动镜像工作流负责按需构建并发布 GHCR 镜像；服务器也可以继续通过仓库源码构建。
+
+`.github/workflows/cloud-image.yml` 只响应 Actions 页面中的 **Run workflow**，默认不发布镜像。将 `push_image` 设为 `true` 后，工作流使用 `GITHUB_TOKEN` 发布 `ghcr.io/25283531/liteshop-cloud-api:<git-sha>` 和 `latest` 标签。
 
 `.github/workflows/ci.yml` 构建调试 APK、lint、Android API 19/28 设备测试，以及本地业务和浏览器回归。APK artifact 为 `liteshop-terminal-debug`，正式签名和真机外设验收另行完成。

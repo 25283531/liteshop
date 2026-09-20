@@ -29,8 +29,6 @@ jobs:
           push: false
           load: true
           tags: liteshop-cloud-api:ci
-      - name: Check Cloudflare Workers source
-        run: node --check apps/cloud/workers/src/index.js
       - name: Start image and verify Cloud API
         shell: bash
         run: |

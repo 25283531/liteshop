@@ -17,5 +17,3 @@ local.properties
 
 .env
 apps/cloud/.env
-apps/cloud/workers/node_modules/
-apps/cloud/workers/wrangler.toml
