@@ -10,20 +10,34 @@ Workers 版本与 Python Cloud API 保持以下路径和事件协议：
 
 Workers 使用 D1 保存事件和投影，终端同步请求必须带 Bearer 令牌以及时间戳、nonce、HMAC-SHA256 签名。不要把终端令牌或小程序令牌写入前端代码。
 
-## 首次部署
+## 一键部署（推荐）
+
+为确保 Worker 使用门店预先创建的数据库，请严格按顺序操作。部署按钮不会替用户生成安全令牌：
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)，在 **Workers & Pages → D1 SQL Database** 创建 D1 数据库，名称必须是 `liteshop-cloud`，并记下 `database_id`。
+2. 点击按钮，导入本仓库的 `apps/cloud/workers` Worker：
+
+   <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/25283531/liteshop/tree/main/apps/cloud/workers"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy LiteShop Cloud API to Cloudflare Workers" /></a>
+
+3. 在部署向导中将配置里的 D1 binding `DB` 绑定到刚创建的 `liteshop-cloud`，并设置 `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` 两个 secret。两个令牌必须是不同的随机值，不能写入 Git 仓库。
+4. 部署脚本会自动执行 `migrations/0001_initial.sql` 初始化 D1 表结构，然后发布 Worker。部署完成后访问 Worker 的 `/healthz` 检查服务。
+
+按钮入口指向 monorepo 的 Worker 子目录。如果 Cloudflare 界面无法识别该子目录，使用下面的 Wrangler 备用流程，结果相同。
+
+## Wrangler 备用部署
 
 ```bash
 cd apps/cloud/workers
 npm install
 npx wrangler login
 npx wrangler d1 create liteshop-cloud
-# 将命令输出的 database_id 写入 wrangler.toml（由 wrangler.toml.example 复制）
-cp wrangler.toml.example wrangler.toml
-npx wrangler d1 execute liteshop-cloud --remote --file=schema.sql
+# 将命令输出的 database_id 写入 wrangler.jsonc（或使用 wrangler.toml.example 作为独立配置）
 npx wrangler secret put LITESHOP_TERMINAL_TOKEN
 npx wrangler secret put LITESHOP_MINIAPP_TOKEN
-npx wrangler deploy
+npm run deploy
 ```
+
+`wrangler.jsonc` 中的 `database_id` 不能使用示例值 `replace-after-wrangler-d1-create`。如果改用 `wrangler.toml.example`，请通过 `npx wrangler --config wrangler.toml ...` 指定配置，并不要提交包含真实 database ID 的本地配置。`npm run deploy` 会执行 `migrations/0001_initial.sql` 后发布 Worker；`schema.sql` 仅作为手工初始化备用文件。
 
 也可以先执行 `npx wrangler dev --local`，然后用终端事件测试接口。生产环境应绑定 `liteshop.250886.xyz`，并在 DNS 中按 Cloudflare 提示添加 Worker 路由或自定义域名。
 

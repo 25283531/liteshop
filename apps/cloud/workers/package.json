@@ -2,7 +2,9 @@
   "private": true,
   "name": "liteshop-cloud-workers",
   "scripts": {
-    "check": "node --check src/index.js"
+    "check": "node --check src/index.js",
+    "db:migrate": "wrangler d1 migrations apply DB --remote",
+    "deploy": "npm run db:migrate && wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

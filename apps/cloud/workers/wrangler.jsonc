@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "liteshop-cloud-api",
+  "main": "src/index.js",
+  "compatibility_date": "2025-01-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "liteshop-cloud",
+      "database_id": "replace-after-wrangler-d1-create"
+    }
+  ]
+}

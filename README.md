@@ -37,7 +37,19 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 
 ## 云端部署（Cloudflare Workers 或 Debian/Ubuntu）
 
-Cloudflare 部署使用 Workers + D1，命令和数据库初始化见 [Workers 部署说明](apps/cloud/workers/README.md)。它适合无服务器托管，固定域名可以绑定到 Worker 自定义域名。
+### Cloudflare Workers 一键部署
+
+Workers 版本使用 D1 保存云端事件和查询投影。**请先创建 D1 数据库，再点击部署按钮**：
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)，进入 **Workers & Pages → D1 SQL Database**，创建数据库，名称必须填写 `liteshop-cloud`。
+2. 记下创建结果中的 `database_id`。部署向导要求将 Worker 的 D1 binding `DB` 绑定到这个数据库；不要新建其他名称的数据库。
+3. 点击下面的按钮，选择 GitHub 仓库中的 `apps/cloud/workers` 目录完成部署。向导中按提示绑定 `liteshop-cloud`，并设置 `LITESHOP_TERMINAL_TOKEN` 与 `LITESHOP_MINIAPP_TOKEN` 两个 secret（使用随机且不同的值）。
+
+<a href="https://deploy.workers.cloudflare.com/?url=https://github.com/25283531/liteshop/tree/main/apps/cloud/workers"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy LiteShop Cloud API to Cloudflare Workers" /></a>
+
+按钮负责导入并部署 Worker，但出于安全原因不会替用户生成令牌。首次部署后，在 Worker 的 **Settings → Variables and Secrets** 检查两个 secret，在 **Bindings** 检查 `DB` 指向 `liteshop-cloud`；部署脚本会自动执行 D1 migration 初始化表结构。若按钮无法识别 monorepo 子目录，可按 [Workers 部署说明](apps/cloud/workers/README.md) 使用 Wrangler 命令行部署。
+
+它适合无服务器托管，固定域名可以绑定到 Worker 自定义域名。
 
 Debian/Ubuntu 可在仓库根目录执行一键脚本：
 
