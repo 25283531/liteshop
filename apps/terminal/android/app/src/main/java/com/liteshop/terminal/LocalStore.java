@@ -214,7 +214,16 @@ public final class LocalStore extends SQLiteOpenHelper {
         }
         JSONObject ctx = context(db), result;
         long stamp = System.currentTimeMillis();
-        if (action.equals("create-member")) {
+        if (action.equals("update-settings")) {
+            JSONObject shop = require(db, "shop", ctx.getString("shop_id"));
+            ContentValues values = new ContentValues();
+            if (input.has("name")) { values.put("name", string(input, "name", 200, true)); }
+            if (input.has("settings") && !input.isNull("settings")) { values.put("settings_json", input.getJSONObject("settings").toString()); }
+            if (values.size() == 0) { reject("INVALID_INPUT", "没有要更新的设置"); }
+            db.update("shop", values, "id=?", new String[] {ctx.getString("shop_id")});
+            result = require(db, "shop", ctx.getString("shop_id"));
+            emit(db, ctx, "SHOP_SETTINGS_UPDATED", ctx.getString("shop_id"), result);
+        } else if (action.equals("create-member")) {
             String id = uid();
             insert(db, "member", object("id", id, "shop_id", ctx.getString("shop_id"),
                 "member_no", "M" + id.replace("-", ""), "name", string(input, "name", 200, true),
@@ -329,7 +338,8 @@ public final class LocalStore extends SQLiteOpenHelper {
 
     private static void validateFields(String action, JSONObject input) {
         String fields;
-        if (action.equals("create-member")) { fields = "name phone inviter_name inviter_member_id remark"; }
+        if (action.equals("update-settings")) { fields = "name settings local_password"; }
+        else if (action.equals("create-member")) { fields = "name phone inviter_name inviter_member_id remark"; }
         else if (action.equals("update-member")) { fields = "member_id version name phone inviter_name inviter_member_id remark status"; }
         else if (action.equals("open-card")) { fields = "member_id card_type_id expire_at"; }
         else if (action.equals("card-status")) { fields = "card_id version status"; }

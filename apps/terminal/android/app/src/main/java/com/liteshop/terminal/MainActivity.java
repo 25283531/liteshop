@@ -190,10 +190,11 @@ public class MainActivity extends Activity {
         if (path == null || path.length() > 2048 || path.indexOf('#') >= 0) { return false; }
         if ("GET".equals(method)) {
             return path.equals("status") || path.equals("card-types")
+                || path.equals("settings")
                 || path.matches("members(\\?q=[^#]*&offset=[0-9]+)?")
                 || path.matches("members/[a-f0-9-]{36}");
         }
-        return "POST".equals(method) && path.matches("commands/(create-member|update-member|open-card|card-status|transact|points)");
+        return "POST".equals(method) && path.matches("commands/(create-member|update-member|update-settings|delete-member|open-card|card-status|transact|points)");
     }
     private void deliver(final String id, final int code, final String body) {
         runOnUiThread(new Runnable() {

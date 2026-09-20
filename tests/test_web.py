@@ -151,6 +151,14 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "CARD_INACTIVE")
         self.assertEqual(self.get("members?q=%E6%9D%8E%E5%9B%9B")[0]["name"], "李四")
 
+    def test_settings_endpoint_is_available(self):
+        settings = self.get("settings")
+        self.assertEqual(settings["name"], "测试门店")
+        self.assertFalse(settings["has_local_password"])
+        updated = self.command("update-settings", name="新门店", settings={"card_types": [{"name": "积分会员", "mode": "STORED"}]}, local_password="1234")
+        self.assertEqual(updated["name"], "新门店")
+        self.assertTrue(self.get("settings")["has_local_password"])
+
 
 if __name__ == "__main__":
     unittest.main()
