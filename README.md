@@ -47,7 +47,7 @@ Workers 版本使用 D1 保存云端事件和查询投影。**请先创建 D1 �
 
 <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/25283531/liteshop/tree/main/apps/cloud/workers"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy LiteShop Cloud API to Cloudflare Workers" /></a>
 
-按钮负责导入并部署 Worker，但出于安全原因不会替用户生成令牌。首次部署后，在 Worker 的 **Settings → Variables and Secrets** 检查两个 secret，在 **Bindings** 检查 `DB` 指向 `liteshop-cloud`；部署脚本会自动执行 D1 migration 初始化表结构。若按钮无法识别 monorepo 子目录，可按 [Workers 部署说明](apps/cloud/workers/README.md) 使用 Wrangler 命令行部署。
+按钮负责导入并部署 Worker，但出于安全原因不会替用户生成令牌。首次部署时，在向导中把 `DB` binding 指向你预先创建的 `liteshop-cloud`，并在 Worker 的 **Settings → Variables and Secrets** 检查两个 secret；部署脚本会自动执行 D1 migration 初始化表结构。若按钮仍提示仓库 URL 无效，请确认使用 README 中的完整按钮链接并重新打开，或按 [Workers 部署说明](apps/cloud/workers/README.md) 使用 Wrangler 命令行部署。
 
 它适合无服务器托管，固定域名可以绑定到 Worker 自定义域名。
 

@@ -37,7 +37,7 @@ npx wrangler secret put LITESHOP_MINIAPP_TOKEN
 npm run deploy
 ```
 
-`wrangler.jsonc` 中的 `database_id` 不能使用示例值 `replace-after-wrangler-d1-create`。如果改用 `wrangler.toml.example`，请通过 `npx wrangler --config wrangler.toml ...` 指定配置，并不要提交包含真实 database ID 的本地配置。`npm run deploy` 会执行 `migrations/0001_initial.sql` 后发布 Worker；`schema.sql` 仅作为手工初始化备用文件。
+仓库中的 `wrangler.jsonc` 使用全零 UUID 作为部署按钮可识别的占位值；在 Cloudflare 向导中必须把 binding `DB` 改为你预先创建的 `liteshop-cloud`，不要直接把全零 UUID 当作真实数据库。命令行部署时，请将实际 `database_id` 写入本地配置，并不要提交包含真实 ID 的配置文件。`npm run deploy` 会执行 `migrations/0001_initial.sql` 后发布 Worker；`schema.sql` 仅作为手工初始化备用文件。
 
 也可以先执行 `npx wrangler dev --local`，然后用终端事件测试接口。生产环境应绑定 `liteshop.250886.xyz`，并在 DNS 中按 Cloudflare 提示添加 Worker 路由或自定义域名。
 
