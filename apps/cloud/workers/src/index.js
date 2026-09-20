@@ -130,6 +130,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/api/v1/terminal/sync/events") {
       if (!bearer(request, env.LITESHOP_TERMINAL_TOKEN)) return fail(401, "UNAUTHORIZED", "鉴权失败");
       const raw = await request.text();
+      if (new TextEncoder().encode(raw).length > 1024 * 1024) return fail(413, "INVALID_BODY_SIZE", "请求体超过 1 MiB");
       if (!(await signedEvents(request, env, raw))) return fail(401, "INVALID_SIGNATURE", "同步请求签名无效或已重放");
       try { const body = JSON.parse(raw); return ok({ accepted: await ingest(env, body.events) }); }
       catch (error) { return fail(400, "INVALID_EVENT", error.message); }
