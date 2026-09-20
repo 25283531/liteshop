@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "liteshop-cloud-api",
+  "main": "apps/cloud/workers/src/index.js",
+  "compatibility_date": "2025-01-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "liteshop-cloud",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "apps/cloud/workers/migrations"
+    }
+  ]
+}

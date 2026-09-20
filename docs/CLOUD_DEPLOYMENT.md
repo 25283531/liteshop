@@ -8,7 +8,7 @@
 
 先在 Cloudflare Dashboard 创建名称为 `liteshop-cloud` 的 D1 数据库，再点击 README 或 [Workers 部署说明](../apps/cloud/workers/README.md) 中的部署按钮。部署向导中把 D1 binding `DB` 绑定到该数据库，并设置 `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` 两个 secret；按钮不会替用户生成令牌。部署脚本会自动执行 `migrations/0001_initial.sql` 初始化表结构，并检查 `/healthz`。
 
-按钮入口使用 GitHub monorepo 子目录。如果部署向导不能识别子目录，进入 `apps/cloud/workers` 按 Workers 说明中的 Wrangler 备用命令执行。Workers 版本使用 D1，不读取 Docker 的 `/data/cloud.sqlite`；从 Docker 迁移时需要重新上传未同步事件或制作专用数据迁移，不要直接把 SQLite 文件上传到 D1。
+按钮入口使用 GitHub 仓库根地址，根目录 Wrangler 配置会指向 `apps/cloud/workers` Worker 源码，避免 Cloudflare 对 monorepo 子目录 URL 的校验问题。如果部署向导仍不能完成部署，进入 `apps/cloud/workers` 按 Workers 说明中的 Wrangler 备用命令执行。Workers 版本使用 D1，不读取 Docker 的 `/data/cloud.sqlite`；从 Docker 迁移时需要重新上传未同步事件或制作专用数据迁移，不要直接把 SQLite 文件上传到 D1。
 
 ## Debian/Ubuntu 一键部署
 

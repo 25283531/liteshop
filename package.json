@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "name": "liteshop-cloud-deploy",
+  "scripts": {
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
