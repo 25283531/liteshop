@@ -66,7 +66,16 @@ class SQLiteRepository:
         return [dict(r) for r in self.conn.execute("SELECT c.*, t.name AS type_name, t.mode FROM member_card c JOIN card_type t ON c.card_type_id=t.id WHERE member_id=? ORDER BY c.created_at,c.id", (member_id,))]
 
     def card_types(self):
-        return [dict(r) for r in self.conn.execute("SELECT * FROM card_type ORDER BY mode")]
+        import json
+        result = []
+        for row in self.conn.execute("SELECT * FROM card_type ORDER BY status DESC, mode, category_code, name"):
+            item = dict(row)
+            try:
+                item["description"] = json.loads(item.get("config_json") or "{}").get("description", "")
+            except (TypeError, ValueError):
+                item["description"] = ""
+            result.append(item)
+        return result
 
     def terminal_status(self):
         context = self.context()

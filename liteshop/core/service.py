@@ -40,6 +40,13 @@ def integer(value, name, minimum=0, maximum=2_000_000_000):
 
 
 class ShopService:
+    PRESET_CARD_TYPES = (
+        {"category_code": "STORED", "name": "储值会员", "mode": "STORED", "description": "余额储值，可用于消费", "default_enabled": True},
+        {"category_code": "COUNT", "name": "计次会员", "mode": "COUNT", "description": "按次数充值和扣次", "default_enabled": True},
+        {"category_code": "POINTS", "name": "积分会员", "mode": "STORED", "description": "消费后累计积分", "points_rate": 1, "default_enabled": False},
+        {"category_code": "RECHARGE_GIFT", "name": "充值赠费", "mode": "STORED", "description": "充值按比例赠送余额", "gift_percent": 10, "default_enabled": False},
+        {"category_code": "DISCOUNT", "name": "折扣会员", "mode": "STORED", "description": "消费按折扣比例结算", "discount_percent": 95, "default_enabled": False},
+    )
     def __init__(self, repository: Repository):
         self.repo = repository
 
@@ -56,11 +63,30 @@ class ShopService:
             self.repo.insert("sync_state", dict(device_id=device, updated_at=stamp))
             self.ctx = dict(shop_id=shop, device_id=device, operator_id=owner)
             self.emit("SHOP_INITIALIZED", shop, self.repo.one("shop", shop))
-            for name, mode in (("Stored value", "STORED"), ("Visit card", "COUNT")):
-                card_type = dict(id=uid(), shop_id=shop, name=name, mode=mode, created_at=stamp)
+            for preset in self.PRESET_CARD_TYPES:
+                card_type = dict(id=uid(), shop_id=shop, category_code=preset["category_code"],
+                                 name=preset["name"], mode=preset["mode"], status=1 if preset["default_enabled"] else 0,
+                                 gift_percent=preset.get("gift_percent", 0), discount_percent=preset.get("discount_percent", 100),
+                                 points_rate=preset.get("points_rate", 0), config_json=encode({"description": preset["description"]}), created_at=stamp)
                 self.repo.insert("card_type", card_type)
                 self.emit("CARD_TYPE_CREATED", card_type["id"], card_type)
             return self.ctx
+
+    def ensure_card_type_presets(self):
+        ctx = self.repo.context()
+        if not ctx:
+            return
+        with self.repo.atomic():
+            for preset in self.PRESET_CARD_TYPES:
+                row = self.repo.conn.execute("SELECT id FROM card_type WHERE shop_id=? AND category_code=?", (ctx["shop_id"], preset["category_code"])).fetchone()
+                if row:
+                    continue
+                card_type = dict(id=uid(), shop_id=ctx["shop_id"], category_code=preset["category_code"], name=preset["name"], mode=preset["mode"],
+                                 status=1 if preset["default_enabled"] else 0, gift_percent=preset.get("gift_percent", 0),
+                                 discount_percent=preset.get("discount_percent", 100), points_rate=preset.get("points_rate", 0),
+                                 config_json=encode({"description": preset["description"]}), created_at=now())
+                self.repo.insert("card_type", card_type)
+                self.emit("CARD_TYPE_CREATED", card_type["id"], card_type)
 
     def command(self, request_id, action, payload, execute):
         text(request_id, "request_id", 128)
@@ -155,15 +181,37 @@ class ShopService:
                 if card_types is not None:
                     if not isinstance(card_types, list) or len(card_types) > 20:
                         raise BusinessError("INVALID_INPUT", "Invalid card types")
+                    known = {p["category_code"]: p for p in self.PRESET_CARD_TYPES}
+                    seen = set()
                     for item in card_types:
-                        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or item.get("mode") not in ("STORED", "COUNT"):
+                        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
                             raise BusinessError("INVALID_INPUT", "Invalid card type")
+                        category = item.get("category_code") or next((p["category_code"] for p in self.PRESET_CARD_TYPES if p["name"] == item.get("name")), "CUSTOM")
+                        if category in seen or (category != "CUSTOM" and category not in known):
+                            raise BusinessError("INVALID_INPUT", "Invalid or duplicate card type")
+                        seen.add(category)
+                        mode = item.get("mode") or known.get(category, {}).get("mode")
+                        if mode not in ("STORED", "COUNT"):
+                            raise BusinessError("INVALID_INPUT", "Invalid card type mode")
                         type_name = text(item["name"], "card type name", 80)
-                        existing = self.repo.conn.execute("SELECT id FROM card_type WHERE shop_id=? AND name=?", (self.ctx["shop_id"], type_name)).fetchone()
+                        def bounded(key, default, minimum, maximum):
+                            value = item.get(key, default)
+                            if type(value) is not int or not minimum <= value <= maximum:
+                                raise BusinessError("INVALID_INPUT", "Invalid card type setting")
+                            return value
+                        enabled = item.get("enabled", True)
+                        if type(enabled) is not bool:
+                            raise BusinessError("INVALID_INPUT", "Invalid card type enabled flag")
+                        existing = self.repo.conn.execute("SELECT id FROM card_type WHERE shop_id=? AND category_code=?", (self.ctx["shop_id"], category)).fetchone()
                         if not existing:
-                            card_type = dict(id=uid(), shop_id=self.ctx["shop_id"], name=type_name, mode=item["mode"], created_at=now())
+                            card_type = dict(id=uid(), shop_id=self.ctx["shop_id"], category_code=category, name=type_name, mode=mode, status=1 if enabled else 0,
+                                             gift_percent=bounded("gift_percent", 0, 0, 100), discount_percent=bounded("discount_percent", 100, 1, 100),
+                                             points_rate=bounded("points_rate", 0, 0, 100000), config_json=encode({"description": known.get(category, {}).get("description", "")}), created_at=now())
                             self.repo.insert("card_type", card_type)
                             self.emit("CARD_TYPE_CREATED", card_type["id"], card_type)
+                        else:
+                            self.repo.conn.execute("UPDATE card_type SET name=?,mode=?,status=?,gift_percent=?,discount_percent=?,points_rate=? WHERE id=?",
+                                                   (type_name, mode, 1 if enabled else 0, bounded("gift_percent", 0, 0, 100), bounded("discount_percent", 100, 1, 100), bounded("points_rate", 0, 0, 100000), existing[0]))
             if local_password is not None:
                 if local_password == "":
                     updates["local_password_hash"] = None

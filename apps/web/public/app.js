@@ -203,12 +203,23 @@
         if (state.member) { loadMember(state.member.member.id); }
     }
     el("reconnect").onclick = connect;
+    function cardTypeField(card) {
+        var code = String(card.category_code || card.id).replace(/[^A-Za-z0-9_-]/g, "_");
+        var checked = Number(card.status) === 1;
+        var detail = card.description || ({STORED: "余额储值，可用于消费", COUNT: "按次数充值和扣次", POINTS: "消费后累计积分", RECHARGE_GIFT: "充值按比例赠送余额", DISCOUNT: "消费按折扣比例结算"}[card.category_code] || "自定义会员卡");
+        return '<div class="card-type-setting" data-card-code="' + esc(card.category_code || code) + '">' +
+            '<div class="type-head"><input type="checkbox" id="card-enabled-' + code + '" data-card-field="enabled"' + (checked ? " checked" : "") + '><strong>' + esc(card.name) + '</strong><span>' + (card.mode === "COUNT" ? "计次" : "储值") + '</span></div>' +
+            '<small>' + esc(detail) + '</small><div class="type-options"><label>显示名称<input data-card-field="name" value="' + esc(card.name) + '" maxlength="80"></label>' +
+            '<label>赠费比例 %<input data-card-field="gift_percent" type="number" min="0" max="100" value="' + (card.gift_percent || 0) + '"></label>' +
+            '<label>折扣 %<input data-card-field="discount_percent" type="number" min="1" max="100" value="' + (card.discount_percent || 100) + '"></label>' +
+            '<label>积分倍率<input data-card-field="points_rate" type="number" min="0" max="100000" value="' + (card.points_rate || 0) + '"></label></div></div>';
+    }
     function openSettings() {
         api("GET", "settings", null, function (error, data) {
             if (error) { notice(error, true); return; }
             el("shop-setting-name").value = data.name || "";
             api("GET", "card-types", null, function (cardError, cards) {
-                if (!cardError) { el("card-setting-types").value = cards.map(function (c) { return c.name + "|" + (c.mode === "COUNT" ? "计次" : "储值"); }).join("\\n"); }
+                if (!cardError) { el("card-type-settings").innerHTML = cards.map(cardTypeField).join(""); }
                 el("settings-error").textContent = ""; el("settings-modal").hidden = false; el("shop-setting-name").focus();
             });
         });
@@ -217,8 +228,8 @@
     el("settings-cancel").onclick = function () { el("settings-modal").hidden = true; };
     el("settings-form").onsubmit = function (event) {
         event.preventDefault();
-        var types = [], lines = el("card-setting-types").value.split(/\\r?\\n/);
-        for (var i = 0; i < lines.length; i++) { var line = lines[i].replace(/^\\s+|\\s+$/g, ""); if (!line) { continue; } var pair = line.split("|"); if (pair.length !== 2 || !pair[0] || (pair[1] !== "储值" && pair[1] !== "计次")) { el("settings-error").textContent = "卡类型格式应为：名称|储值 或 名称|计次"; return; } types.push({name: pair[0], mode: pair[1] === "计次" ? "COUNT" : "STORED"}); }
+        var types = [], cards = el("card-type-settings").querySelectorAll(".card-type-setting");
+        for (var i = 0; i < cards.length; i++) { var row = cards[i], code = row.getAttribute("data-card-code"), number = function (field, fallback) { var n = Number(row.querySelector('[data-card-field="' + field + '"]').value); return isFinite(n) ? n : fallback; }; types.push({category_code: code, name: row.querySelector('[data-card-field="name"]').value, enabled: row.querySelector('[data-card-field="enabled"]').checked, gift_percent: number("gift_percent", 0), discount_percent: number("discount_percent", 100), points_rate: number("points_rate", 0)}); }
         api("POST", "commands/update-settings", {request_id: "settings-" + new Date().getTime(), name: el("shop-setting-name").value, settings: {card_types: types}, local_password: el("local-setting-password").value || null}, function (error) {
             if (error) { el("settings-error").textContent = error; return; }
             el("settings-modal").hidden = true; el("local-setting-password").value = ""; notice("设置已保存", false); connect();

@@ -74,6 +74,10 @@ public final class LocalStore extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE shop ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'");
             db.execSQL("ALTER TABLE shop ADD COLUMN local_password_hash TEXT");
             db.execSQL("ALTER TABLE card_type ADD COLUMN gift_percent INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN category_code TEXT NOT NULL DEFAULT 'CUSTOM'");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN discount_percent INTEGER NOT NULL DEFAULT 100");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN points_rate INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_member_inviter ON member(inviter_member_id)");
             long stamp = System.currentTimeMillis();
             String shop = uid(), device = uid(), owner = uid();
@@ -89,6 +93,16 @@ public final class LocalStore extends SQLiteOpenHelper {
                     mode.equals("STORED") ? "储值卡" : "次卡", "mode", mode, "created_at", stamp));
                 emit(db, ctx, "CARD_TYPE_CREATED", id, require(db, "card_type", id));
             }
+            String[] presetCodes = new String[] {"POINTS", "RECHARGE_GIFT", "DISCOUNT"};
+            String[] presetNames = new String[] {"积分会员", "充值赠费", "折扣会员"};
+            String[] descriptions = new String[] {"消费后累计积分", "充值按比例赠送余额", "消费按折扣比例结算"};
+            for (int i = 0; i < presetCodes.length; i++) {
+                String id = uid();
+                insert(db, "card_type", object("id", id, "shop_id", shop, "category_code", presetCodes[i], "name", presetNames[i], "mode", "STORED", "status", 0,
+                    "gift_percent", presetCodes[i].equals("RECHARGE_GIFT") ? 10 : 0, "discount_percent", presetCodes[i].equals("DISCOUNT") ? 95 : 100,
+                    "points_rate", presetCodes[i].equals("POINTS") ? 1 : 0, "config_json", object("description", descriptions[i]).toString(), "created_at", stamp));
+                emit(db, ctx, "CARD_TYPE_CREATED", id, require(db, "card_type", id));
+            }
         } catch (Exception e) { throw new SQLiteException("Cannot initialize local ledger", e); }
     }
 
@@ -99,7 +113,24 @@ public final class LocalStore extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE shop ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'");
             db.execSQL("ALTER TABLE shop ADD COLUMN local_password_hash TEXT");
             db.execSQL("ALTER TABLE card_type ADD COLUMN gift_percent INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN category_code TEXT NOT NULL DEFAULT 'CUSTOM'");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN discount_percent INTEGER NOT NULL DEFAULT 100");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN points_rate INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_member_inviter ON member(inviter_member_id)");
+            Cursor shops = db.rawQuery("SELECT id FROM shop LIMIT 1", null);
+            try {
+                if (shops.moveToFirst()) {
+                    String shopId = shops.getString(0); long stamp = System.currentTimeMillis();
+                    String[] codes = new String[] {"POINTS", "RECHARGE_GIFT", "DISCOUNT"};
+                    String[] names = new String[] {"积分会员", "充值赠费", "折扣会员"};
+                    for (int i = 0; i < codes.length; i++) {
+                        Cursor existing = db.rawQuery("SELECT id FROM card_type WHERE shop_id=? AND category_code=?", new String[] {shopId, codes[i]});
+                        boolean found = existing.moveToFirst(); existing.close();
+                        if (!found) { try { insert(db, "card_type", object("id", uid(), "shop_id", shopId, "category_code", codes[i], "name", names[i], "mode", "STORED", "status", 0, "created_at", stamp)); } catch (Exception error) { throw new SQLiteException("Cannot seed card type", error); } }
+                    }
+                }
+            } finally { shops.close(); }
         }
     }
 

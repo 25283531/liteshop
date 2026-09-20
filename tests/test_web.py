@@ -158,6 +158,11 @@ class WebTests(unittest.TestCase):
         updated = self.command("update-settings", name="新门店", settings={"card_types": [{"name": "积分会员", "mode": "STORED"}]}, local_password="1234")
         self.assertEqual(updated["name"], "新门店")
         self.assertTrue(self.get("settings")["has_local_password"])
+        categories = {item["category_code"]: item for item in self.get("card-types")}
+        self.assertIn("COUNT", categories)
+        self.assertIn("RECHARGE_GIFT", categories)
+        self.assertEqual(categories["POINTS"]["name"], "积分会员")
+        self.assertEqual(categories["RECHARGE_GIFT"]["status"], 0)
 
 
 if __name__ == "__main__":

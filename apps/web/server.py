@@ -91,6 +91,8 @@ class Handler(BaseHTTPRequestHandler):
             repo = SQLiteRepository(self.server.db_path)
             service = ShopService(repo)
             path, query = parsed.path, parse_qs(parsed.query)
+            if method == "GET" and path in ("/api/v1/card-types", "/api/v1/settings"):
+                service.ensure_card_type_presets()
             if method == "GET" and path == "/api/v1/status":
                 result = repo.terminal_status()
             elif method == "GET" and path == "/api/v1/card-types":
