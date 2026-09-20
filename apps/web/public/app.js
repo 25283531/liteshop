@@ -1,6 +1,6 @@
 (function () {
     "use strict";
-    var state = {member: null, types: [], offset: 0, pending: null, busy: false, form: null, opener: null, detailRequest: 0, searchRequest: 0};
+    var state = {member: null, types: [], offset: 0, pending: null, busy: false, form: null, opener: null, detailRequest: 0, searchRequest: 0, searchTimer: null};
     var bridge = window.LiteShopTerminal;
     function el(id) { return document.getElementById(id); }
     function esc(value) { return String(value === null || value === undefined ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
@@ -88,8 +88,8 @@
     function button(action, label, id) { return '<button class="secondary" data-action="' + action + '" data-id="' + esc(id || "") + '">' + label + '</button>'; }
     function render() {
         var d = state.member, m = d.member;
-        var html = '<h2 class="member-title">' + esc(m.name) + '<span class="badge">' + (m.status ? "正常" : "已停用") + '</span></h2><p class="meta">' + esc(m.phone || "未留手机号") + ' · ' + esc(m.member_no) + '</p><p>' + esc(m.remark) + '</p>';
-        html += '<div class="toolbar">' + button("edit", "编辑会员") + button("member-status", m.status ? "停用会员" : "启用会员") + button("open", "＋ 开卡") + button("points", "积分 · " + d.points.balance) + '</div><h2>会员卡包</h2>';
+        var html = '<h2 class="member-title">' + esc(m.name) + '<span class="badge">' + (m.status ? "正常" : "已停用") + '</span></h2><p class="meta">' + esc(m.phone || "未留手机号") + ' · ' + esc(m.member_no) + ' · 邀请注册 ' + (m.invited_count || 0) + ' 人</p><p>' + esc(m.remark) + (m.inviter_name ? '<br>邀请人：' + esc(m.inviter_name) : '') + '</p>';
+        html += '<div class="toolbar">' + button("edit", "编辑会员") + button("member-status", m.status ? "停用会员" : "启用会员") + button("open", "＋ 开卡") + button("points", "积分 · " + d.points.balance) + button("delete-member", "删除会员") + '</div><h2>会员卡包</h2>';
         html += d.cards.length ? d.cards.map(function (c) {
             var stored = c.mode === "STORED";
             return '<div class="card"><h3>' + (stored ? "储值卡" : "次卡") + ' <small>' + esc({ACTIVE: "正常", LOST: "已挂失", DISABLED: "已停用"}[c.status] || c.status) + '</small></h3><strong>' + (stored ? '¥ ' + money(c.balance) : c.remaining_times + ' 次') + '</strong><small>' + esc(c.card_no) + '</small><div class="toolbar">' + button(stored ? "RECHARGE" : "CREDIT_TIMES", stored ? "充值" : "充次", c.id) + button(stored ? "CONSUME" : "DEDUCT_TIMES", stored ? "消费" : "扣次", c.id) + button("card-status", "卡片状态", c.id) + '</div></div>';
@@ -113,8 +113,9 @@
             state.member.cards.forEach(function (c) { if (c.id === id) { card = c; } });
             state.member.transactions.forEach(function (t) { if (t.id === id) { tx = t; } });
         }
-        if (action === "new" || action === "edit") { title = action === "new" ? "新增会员" : "编辑会员"; fields = field("name", "会员姓名", action === "edit" ? m.name : "", true) + field("phone", "手机号（可选）", action === "edit" ? m.phone : "") + field("remark", "备注", action === "edit" ? m.remark : ""); }
+        if (action === "new" || action === "edit") { title = action === "new" ? "新增会员" : "编辑会员"; fields = field("name", "会员姓名", action === "edit" ? m.name : "", true) + field("phone", "手机号（可选）", action === "edit" ? m.phone : "") + field("inviter_name", "邀请人（可稍后补填）", action === "edit" ? m.inviter_name : "") + field("remark", "备注", action === "edit" ? m.remark : ""); }
         else if (action === "member-status") { title = m.status ? "停用会员" : "启用会员"; fields = '<p>停用后将无法开卡和进行交易，已有账本记录保留。</p>'; }
+        else if (action === "delete-member") { title = "删除会员数据"; fields = '<p>删除后会员将从本地搜索中隐藏，账本和审计记录仍保留。此操作需要本地设置密码。</p>' + '<label for="f-password">本地设置密码</label><input id="f-password" type="password" required autocomplete="current-password">'; }
         else if (action === "open") { title = "开通会员卡"; fields = select("type", "卡类型", state.types.map(function (t) { return [t.id, t.mode === "STORED" ? "储值卡" : "次卡"]; })); }
         else if (action === "points") { title = "调整积分"; fields = field("quantity", "积分变动（增加填正数，扣除填负数）", "", true) + field("remark", "调整原因", "", true); }
         else if (action === "card-status") { title = "修改卡片状态"; fields = select("status", "卡片状态", [["ACTIVE", "正常"], ["LOST", "挂失"], ["DISABLED", "停用"]], card.status); }
@@ -171,9 +172,10 @@
         try {
             if (a === "new" || a === "edit") {
                 command = a === "new" ? "create-member" : "update-member";
-                p = {name: value("name"), phone: value("phone") || null, remark: value("remark")};
+                p = {name: value("name"), phone: value("phone") || null, inviter_name: value("inviter_name") || null, remark: value("remark")};
                 if (a === "edit") { p.member_id = f.member.id; p.version = f.member.version; }
             } else if (a === "member-status") { command = "update-member"; p = {member_id: f.member.id, version: f.member.version, status: f.member.status ? 0 : 1}; }
+            else if (a === "delete-member") { command = "delete-member"; p = {member_id: f.member.id, version: f.member.version, password: value("password")}; }
             else if (a === "open") { command = "open-card"; p = {member_id: f.member.id, card_type_id: value("type")}; }
             else if (a === "points") { command = "points"; p = {member_id: f.member.id, points: quantity(false, true), remark: value("remark")}; }
             else if (a === "card-status") { command = "card-status"; p = {card_id: f.card.id, version: f.card.version, status: value("status")}; }
@@ -193,6 +195,7 @@
     el("search-form").onsubmit = function (e) { e.preventDefault(); state.offset = 0; search(); };
     el("prev").onclick = function () { state.offset = Math.max(0, state.offset - 50); search(); };
     el("next").onclick = function () { state.offset += 50; search(); };
+    el("search").oninput = function () { state.offset = 0; if (state.searchTimer) { window.clearTimeout(state.searchTimer); } state.searchTimer = window.setTimeout(search, 280); };
     el("login-form").onsubmit = function (e) { e.preventDefault(); try { storageSet("liteshop.token", el("token").value); el("token").value = ""; connect(); } catch (error) { notice("请开启浏览器会话存储", true); } };
     function connect() {
         status(); search();
@@ -200,6 +203,28 @@
         if (state.member) { loadMember(state.member.member.id); }
     }
     el("reconnect").onclick = connect;
+    function openSettings() {
+        api("GET", "settings", null, function (error, data) {
+            if (error) { notice(error, true); return; }
+            el("shop-setting-name").value = data.name || "";
+            api("GET", "card-types", null, function (cardError, cards) {
+                if (!cardError) { el("card-setting-types").value = cards.map(function (c) { return c.name + "|" + (c.mode === "COUNT" ? "计次" : "储值"); }).join("\\n"); }
+                el("settings-error").textContent = ""; el("settings-modal").hidden = false; el("shop-setting-name").focus();
+            });
+        });
+    }
+    el("settings").onclick = openSettings;
+    el("settings-cancel").onclick = function () { el("settings-modal").hidden = true; };
+    el("settings-form").onsubmit = function (event) {
+        event.preventDefault();
+        var types = [], lines = el("card-setting-types").value.split(/\\r?\\n/);
+        for (var i = 0; i < lines.length; i++) { var line = lines[i].replace(/^\\s+|\\s+$/g, ""); if (!line) { continue; } var pair = line.split("|"); if (pair.length !== 2 || !pair[0] || (pair[1] !== "储值" && pair[1] !== "计次")) { el("settings-error").textContent = "卡类型格式应为：名称|储值 或 名称|计次"; return; } types.push({name: pair[0], mode: pair[1] === "计次" ? "COUNT" : "STORED"}); }
+        api("POST", "commands/update-settings", {request_id: "settings-" + new Date().getTime(), name: el("shop-setting-name").value, settings: {card_types: types}, local_password: el("local-setting-password").value || null}, function (error) {
+            if (error) { el("settings-error").textContent = error; return; }
+            el("settings-modal").hidden = true; el("local-setting-password").value = ""; notice("设置已保存", false); connect();
+        });
+    };
+    el("cloud-login").onclick = function () { window.open("https://liteshop.250886.xyz", "_blank"); };
     document.onkeydown = function (e) {
         if (el("modal").hidden) { if (e.keyCode === 113) { el("search").focus(); el("search").select(); e.preventDefault(); } return; }
         if (e.keyCode === 27) { closeForm(); }

@@ -59,7 +59,8 @@ class SQLiteRepository:
         return dict(row) if row else None
 
     def members(self, query="", limit=50, offset=0):
-        return [dict(r) for r in self.conn.execute("SELECT * FROM member WHERE deleted_at IS NULL AND (instr(name, ?) > 0 OR instr(COALESCE(phone,''), ?) > 0 OR instr(member_no, ?) > 0) ORDER BY created_at, id LIMIT ? OFFSET ?", (query, query, query, limit, offset))]
+        pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        return [dict(r) for r in self.conn.execute("SELECT m.*, (SELECT COUNT(*) FROM member invited WHERE invited.inviter_member_id=m.id AND invited.deleted_at IS NULL) AS invited_count FROM member m WHERE m.deleted_at IS NULL AND (m.name LIKE ? ESCAPE '\\' OR COALESCE(m.phone,'') LIKE ? ESCAPE '\\' OR m.member_no LIKE ? ESCAPE '\\') ORDER BY m.created_at, m.id LIMIT ? OFFSET ?", (pattern, pattern, pattern, limit, offset))]
 
     def cards(self, member_id):
         return [dict(r) for r in self.conn.execute("SELECT c.*, t.name AS type_name, t.mode FROM member_card c JOIN card_type t ON c.card_type_id=t.id WHERE member_id=? ORDER BY c.created_at,c.id", (member_id,))]
@@ -74,6 +75,17 @@ class SQLiteRepository:
                     pending_events=self.conn.execute("SELECT COUNT(*) FROM sync_event WHERE status != 'SYNCED'").fetchone()[0],
                     member_count=self.conn.execute("SELECT COUNT(*) FROM member WHERE deleted_at IS NULL").fetchone()[0],
                     cloud_sync="NOT_CONFIGURED")
+
+    def settings(self):
+        row = self.conn.execute("SELECT id,name,settings_json,local_password_hash FROM shop LIMIT 1").fetchone()
+        import json
+        data = dict(row) if row else {}
+        try:
+            data["settings"] = json.loads(data.pop("settings_json") or "{}")
+        except (TypeError, ValueError):
+            data["settings"] = {}
+        data["has_local_password"] = bool(data.pop("local_password_hash", None))
+        return data
 
     def points_ledger(self, member_id):
         return [dict(r) for r in self.conn.execute("SELECT * FROM points_transaction WHERE member_id=? ORDER BY rowid DESC LIMIT 50", (member_id,))]

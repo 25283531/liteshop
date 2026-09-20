@@ -4,6 +4,9 @@ import json
 import sqlite3
 import time
 from uuid import uuid4
+import hashlib
+import hmac
+import os
 from .repository import Repository
 
 class BusinessError(ValueError):
@@ -98,13 +101,15 @@ class ShopService:
             raise BusinessError("MEMBER_INACTIVE", "Member is inactive")
         return member
 
-    def create_member(self, request_id, name, phone=None, remark=""):
-        payload = dict(name=name, phone=phone, remark=remark)
+    def create_member(self, request_id, name, phone=None, remark="", inviter_name=None, inviter_member_id=None):
+        payload = dict(name=name, phone=phone, remark=remark, inviter_name=inviter_name, inviter_member_id=inviter_member_id)
         def execute():
             stamp, identity = now(), uid()
             row = dict(id=identity, shop_id=self.ctx["shop_id"], member_no="M" + identity.replace("-", ""),
                        name=text(name, "name"), phone=text(phone, "phone", 32) if phone is not None else None,
-                       remark=text(remark, "remark", 1000, False), created_at=stamp, updated_at=stamp)
+                       remark=text(remark, "remark", 1000, False),
+                       inviter_name=text(inviter_name, "inviter_name", 200) if inviter_name else None,
+                       inviter_member_id=inviter_member_id or None, created_at=stamp, updated_at=stamp)
             self.repo.insert("member", row)
             self.repo.insert("points_account", dict(member_id=identity, updated_at=stamp))
             result = self.require("member", identity)
@@ -120,10 +125,10 @@ class ShopService:
                 raise BusinessError("VERSION_CONFLICT", "Member was changed; reload first")
             if member["deleted_at"] is not None:
                 raise BusinessError("MEMBER_INACTIVE", "Member is archived")
-            if not changes or not set(changes) <= {"name", "phone", "remark", "status"}:
+            if not changes or not set(changes) <= {"name", "phone", "remark", "status", "inviter_name", "inviter_member_id"}:
                 raise BusinessError("INVALID_INPUT", "Unsupported member changes")
             updates = dict(changes)
-            for key in ("name", "phone", "remark"):
+            for key in ("name", "phone", "remark", "inviter_name"):
                 if key in updates:
                     if key == "phone" and updates[key] is None:
                         continue
@@ -136,6 +141,66 @@ class ShopService:
             self.emit("MEMBER_UPDATED", member_id, result)
             return result
         return self.command(request_id, "UPDATE_MEMBER", dict(member_id=member_id, version=version, changes=changes), execute)
+
+    def update_settings(self, request_id, name=None, settings=None, local_password=None):
+        def execute():
+            updates = {}
+            if name is not None:
+                updates["name"] = text(name, "shop name", 200)
+            if settings is not None:
+                if not isinstance(settings, dict):
+                    raise BusinessError("INVALID_INPUT", "Invalid settings")
+                updates["settings_json"] = encode(settings)
+                card_types = settings.get("card_types")
+                if card_types is not None:
+                    if not isinstance(card_types, list) or len(card_types) > 20:
+                        raise BusinessError("INVALID_INPUT", "Invalid card types")
+                    for item in card_types:
+                        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or item.get("mode") not in ("STORED", "COUNT"):
+                            raise BusinessError("INVALID_INPUT", "Invalid card type")
+                        type_name = text(item["name"], "card type name", 80)
+                        existing = self.repo.conn.execute("SELECT id FROM card_type WHERE shop_id=? AND name=?", (self.ctx["shop_id"], type_name)).fetchone()
+                        if not existing:
+                            card_type = dict(id=uid(), shop_id=self.ctx["shop_id"], name=type_name, mode=item["mode"], created_at=now())
+                            self.repo.insert("card_type", card_type)
+                            self.emit("CARD_TYPE_CREATED", card_type["id"], card_type)
+            if local_password is not None:
+                if local_password == "":
+                    updates["local_password_hash"] = None
+                elif not isinstance(local_password, str) or len(local_password) < 4 or len(local_password) > 128:
+                    raise BusinessError("INVALID_INPUT", "Local password must be 4-128 characters")
+                else:
+                    salt = os.urandom(16)
+                    digest = hashlib.pbkdf2_hmac("sha256", local_password.encode(), salt, 120000)
+                    updates["local_password_hash"] = "pbkdf2$120000$%s$%s" % (salt.hex(), digest.hex())
+            if not updates:
+                raise BusinessError("INVALID_INPUT", "No settings supplied")
+            self.repo.conn.execute("UPDATE shop SET " + ",".join(k+"=?" for k in updates) + " WHERE id=?", (*updates.values(), self.ctx["shop_id"]))
+            self.emit("SHOP_SETTINGS_UPDATED", self.ctx["shop_id"], self.repo.one("shop", self.ctx["shop_id"]))
+            return self.repo.one("shop", self.ctx["shop_id"])
+        return self.command(request_id, "UPDATE_SETTINGS", dict(name=name, settings=settings, local_password=bool(local_password)), execute)
+
+    def delete_member(self, request_id, member_id, version, password):
+        def execute():
+            member = self.require("member", member_id)
+            if version != member["version"]:
+                raise BusinessError("VERSION_CONFLICT", "Member was changed; reload first")
+            stored = self.repo.conn.execute("SELECT local_password_hash FROM shop WHERE id=?", (self.ctx["shop_id"],)).fetchone()[0]
+            if not stored:
+                raise BusinessError("PASSWORD_REQUIRED", "请先设置本地设置密码")
+            try:
+                _, rounds, salt_hex, digest_hex = stored.split("$")
+                valid = hmac.compare_digest(hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), int(rounds)).hex(), digest_hex)
+            except Exception:
+                valid = False
+            if not valid:
+                raise BusinessError("PASSWORD_INVALID", "本地设置密码错误")
+            stamp = now()
+            self.repo.update("member", member_id, dict(status=0, deleted_at=stamp, version=version+1, updated_at=stamp))
+            result = self.require("member", member_id)
+            self.emit("MEMBER_DELETED", member_id, result)
+            return result
+        return self.command(request_id, "DELETE_MEMBER", dict(member_id=member_id, version=version), execute)
 
     def open_card(self, request_id, member_id, card_type_id, expire_at=None):
         def execute():
@@ -232,5 +297,7 @@ class ShopService:
         return self.command(request_id, "POINTS", dict(member_id=member_id, points=points, remark=remark), execute)
 
     def member_detail(self, member_id):
-        return dict(member=self.require("member", member_id), cards=self.repo.cards(member_id),
+        member = self.require("member", member_id)
+        member["invited_count"] = self.repo.conn.execute("SELECT COUNT(*) FROM member WHERE inviter_member_id=? AND deleted_at IS NULL", (member_id,)).fetchone()[0]
+        return dict(member=member, cards=self.repo.cards(member_id),
                     points=self.require("points_account", member_id), transactions=self.repo.ledger(member_id))

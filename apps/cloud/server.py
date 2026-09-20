@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS points_projection (
   member_id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, payload TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS terminal_registry (
+  device_id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'ACTIVE', last_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cloud_shop (
+  shop_id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
+);
 """
 
 
@@ -80,7 +87,7 @@ class CloudStore:
                         raise ValueError("invalid " + field)
                 if type(event.get("schema_version", 1)) is not int or event.get("schema_version", 1) != 1:
                     raise ValueError("unsupported schema_version")
-                if event["event_type"] not in {"SHOP_INITIALIZED", "CARD_TYPE_CREATED", "MEMBER_CREATED", "MEMBER_UPDATED", "CARD_OPENED", "CARD_STATUS_CHANGED", "CARD_TRANSACTION", "POINTS_CHANGED"}:
+                if event["event_type"] not in {"SHOP_INITIALIZED", "SHOP_SETTINGS_UPDATED", "CARD_TYPE_CREATED", "MEMBER_CREATED", "MEMBER_UPDATED", "MEMBER_DELETED", "CARD_OPENED", "CARD_STATUS_CHANGED", "CARD_TRANSACTION", "POINTS_CHANGED"}:
                     raise ValueError("unsupported event_type")
                 event_id = str(event["event_id"])
                 digest = fingerprint(event)
@@ -107,6 +114,7 @@ class CloudStore:
                     int(event.get("schema_version", 1)), str(event["event_type"]), str(event["entity_id"]),
                     json.dumps(body, ensure_ascii=False, sort_keys=True), digest, int(event["created_at"]), stamp()))
                 self._project(event)
+                self.conn.execute("INSERT INTO terminal_registry(device_id,shop_id,last_seen) VALUES (?,?,?) ON CONFLICT(device_id) DO UPDATE SET shop_id=excluded.shop_id,last_seen=excluded.last_seen", (event["device_id"], event["shop_id"], stamp()))
                 accepted.append({"event_id": event_id, "status": "ACCEPTED"})
         return accepted
 
@@ -121,7 +129,7 @@ class CloudStore:
     def _project(self, event):
         payload = event["payload"]
         kind = event["event_type"]
-        if kind in ("MEMBER_CREATED", "MEMBER_UPDATED"):
+        if kind in ("MEMBER_CREATED", "MEMBER_UPDATED", "MEMBER_DELETED"):
             self.conn.execute("INSERT INTO member_projection VALUES (?,?,?,?) ON CONFLICT(member_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",
                               (event["entity_id"], event["shop_id"], json.dumps(payload, ensure_ascii=False), stamp()))
         elif kind == "CARD_OPENED" or kind == "CARD_STATUS_CHANGED":
@@ -149,6 +157,19 @@ class CloudStore:
     def member(self, member_id):
         with self.lock:
             return self._member(member_id)
+
+    def shops(self):
+        with self.lock:
+            rows = self.conn.execute("SELECT shop_id,COUNT(*) AS member_count FROM member_projection GROUP BY shop_id ORDER BY shop_id").fetchall()
+            return [dict(r) for r in rows]
+
+    def members(self, shop_id=None):
+        with self.lock:
+            sql = "SELECT member_id,shop_id,payload FROM member_projection"
+            args = ()
+            if shop_id:
+                sql += " WHERE shop_id=?"; args = (shop_id,)
+            return [dict(member_id=r[0], shop_id=r[1], **json.loads(r[2])) for r in self.conn.execute(sql, args)]
 
     def _member(self, member_id):
         member = self.conn.execute("SELECT payload,updated_at FROM member_projection WHERE member_id=?", (member_id,)).fetchone()
@@ -209,6 +230,19 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.store.member(member_id)
             self.respond(200, {"ok": True, "data": data, "last_synced_at": data.get("last_synced_at") if data else None})
             return
+        parsed = urlsplit(self.path)
+        if parsed.path == "/api/v1/cloud/shops":
+            if not self.auth("miniapp"):
+                return
+            self.respond(200, {"ok": True, "data": self.server.store.shops()})
+            return
+        if parsed.path == "/api/v1/cloud/members":
+            if not self.auth("miniapp"):
+                return
+            from urllib.parse import parse_qs
+            shop_id = parse_qs(parsed.query).get("shop_id", [None])[0]
+            self.respond(200, {"ok": True, "data": self.server.store.members(shop_id)})
+            return
         self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "接口不存在"}})
 
     def do_POST(self):
@@ -218,7 +252,19 @@ class Handler(BaseHTTPRequestHandler):
         if not self.auth("terminal"):
             return
         try:
-            result = self.server.store.ingest(self.body().get("events"))
+            raw = self.body()
+            timestamp = self.headers.get("X-LiteShop-Timestamp")
+            nonce = self.headers.get("X-LiteShop-Nonce")
+            signature = self.headers.get("X-LiteShop-Signature")
+            if timestamp and nonce and signature:
+                if abs(int(time.time() * 1000) - int(timestamp)) > 300000:
+                    raise ValueError("request timestamp expired")
+                expected = hmac.new(self.server.tokens["terminal"].encode(), (timestamp + "\n" + nonce + "\n" + json.dumps(raw, ensure_ascii=False, separators=(",", ":"))).encode(), hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(expected, signature):
+                    raise ValueError("invalid request signature")
+            elif self.client_address[0] not in ("127.0.0.1", "::1"):
+                raise ValueError("signed request required")
+            result = self.server.store.ingest(raw.get("events"))
             self.respond(200, {"ok": True, "data": {"accepted": result}})
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             self.respond(400, {"ok": False, "error": {"code": "INVALID_EVENT", "message": str(exc)}})

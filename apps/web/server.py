@@ -16,9 +16,10 @@ from liteshop.storage.repository import SQLiteRepository
 PUBLIC = Path(__file__).with_name("public")
 COMMANDS = {"create-member": "create_member", "update-member": "update_member",
             "open-card": "open_card", "card-status": "set_card_status",
-            "transact": "transact", "points": "change_points"}
+            "transact": "transact", "points": "change_points",
+            "update-settings": "update_settings", "delete-member": "delete_member"}
 INTEGER_FIELDS = {"version", "amount", "times", "points", "expire_at", "status"}
-NULLABLE = {"phone", "expire_at", "source_id"}
+NULLABLE = {"phone", "expire_at", "source_id", "inviter_name", "inviter_member_id", "name", "settings", "local_password"}
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -94,6 +95,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = repo.terminal_status()
             elif method == "GET" and path == "/api/v1/card-types":
                 result = repo.card_types()
+            elif method == "GET" and path == "/api/v1/settings":
+                result = repo.settings()
             elif method == "GET" and path == "/api/v1/members":
                 search, offset = query.get("q", [""])[0], int(query.get("offset", ["0"])[0])
                 if len(search) > 200 or not 0 <= offset <= 2_000_000_000:
@@ -123,7 +126,10 @@ class Handler(BaseHTTPRequestHandler):
                     if key in NULLABLE and value is None:
                         continue
                     integer_field = key in INTEGER_FIELDS and not (key == "status" and action == "set_card_status")
-                    if type(value) is not (int if integer_field else str):
+                    if key == "settings":
+                        if not isinstance(value, dict):
+                            raise ValueError("Invalid settings")
+                    elif type(value) is not (int if integer_field else str):
                         raise ValueError("Invalid field type")
                 command = getattr(service, action)
                 inspect.signature(command).bind(**payload)

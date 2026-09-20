@@ -7,8 +7,12 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.Charset;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 
 /** Optional outbox uploader. Empty configuration keeps the terminal fully offline. */
 final class CloudSync {
@@ -42,6 +46,11 @@ final class CloudSync {
             connection.setRequestProperty("Authorization", "Bearer " + token);
             connection.setRequestProperty("Content-Type", "application/json");
             byte[] bytes = body.toString().getBytes("UTF-8");
+            String timestamp = String.valueOf(System.currentTimeMillis());
+            String nonce = UUID.randomUUID().toString();
+            connection.setRequestProperty("X-LiteShop-Timestamp", timestamp);
+            connection.setRequestProperty("X-LiteShop-Nonce", nonce);
+            connection.setRequestProperty("X-LiteShop-Signature", sign(token, timestamp + "\n" + nonce + "\n" + body.toString()));
             connection.setFixedLengthStreamingMode(bytes.length);
             OutputStream output = connection.getOutputStream();
             try { output.write(bytes); } finally { output.close(); }
@@ -71,5 +80,14 @@ final class CloudSync {
             return true;
         } catch (Exception ignored) { return false; }
         finally { if (connection != null) { connection.disconnect(); } }
+    }
+
+    private static String sign(String secret, String value) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(Charset.forName("UTF-8")), "HmacSHA256"));
+        byte[] digest = mac.doFinal(value.getBytes(Charset.forName("UTF-8")));
+        StringBuilder hex = new StringBuilder();
+        for (byte b : digest) { hex.append(String.format(java.util.Locale.US, "%02x", b & 255)); }
+        return hex.toString();
     }
 }

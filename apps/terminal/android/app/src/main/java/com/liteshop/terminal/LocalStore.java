@@ -41,7 +41,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     public LocalStore(Context context) { this(context, "liteshop.db"); }
     // Package-private database name allows isolated instrumentation tests.
     LocalStore(Context context, String name) {
-        super(context, name, null, 1);
+        super(context, name, null, 2);
         this.context = context.getApplicationContext();
     }
 
@@ -69,6 +69,12 @@ public final class LocalStore extends SQLiteOpenHelper {
                 }
                 if (statement.toString().trim().length() != 0) { throw new SQLiteException("Incomplete schema"); }
             } finally { reader.close(); }
+            db.execSQL("ALTER TABLE member ADD COLUMN inviter_name TEXT");
+            db.execSQL("ALTER TABLE member ADD COLUMN inviter_member_id TEXT");
+            db.execSQL("ALTER TABLE shop ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'");
+            db.execSQL("ALTER TABLE shop ADD COLUMN local_password_hash TEXT");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN gift_percent INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_member_inviter ON member(inviter_member_id)");
             long stamp = System.currentTimeMillis();
             String shop = uid(), device = uid(), owner = uid();
             insert(db, "shop", object("id", shop, "name", "我的门店", "created_at", stamp));
@@ -87,7 +93,14 @@ public final class LocalStore extends SQLiteOpenHelper {
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        throw new SQLiteException("No migration available; existing ledger is preserved");
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE member ADD COLUMN inviter_name TEXT");
+            db.execSQL("ALTER TABLE member ADD COLUMN inviter_member_id TEXT");
+            db.execSQL("ALTER TABLE shop ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'");
+            db.execSQL("ALTER TABLE shop ADD COLUMN local_password_hash TEXT");
+            db.execSQL("ALTER TABLE card_type ADD COLUMN gift_percent INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_member_inviter ON member(inviter_member_id)");
+        }
     }
 
     public synchronized Response handle(String method, String path, String body) {
@@ -144,6 +157,10 @@ public final class LocalStore extends SQLiteOpenHelper {
                 "cloud_sync", cloudState, "storage", "ANDROID_SQLITE");
         }
         if (path.equals("card-types")) { return rows(db, "SELECT * FROM card_type ORDER BY mode"); }
+        if (path.equals("settings")) {
+            JSONObject shop = require(db, "shop", context(db).getString("shop_id"));
+            return object("id", shop.getString("id"), "name", shop.getString("name"), "has_local_password", !shop.isNull("local_password_hash"));
+        }
         if (path.equals("members") || path.startsWith("members?")) {
             String query = "", offset = "0";
             if (path.startsWith("members?")) {
@@ -163,13 +180,15 @@ public final class LocalStore extends SQLiteOpenHelper {
             }
             // API 19 ships SQLite 3.7.11, before instr() was introduced.
             String pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
-            return rows(db, "SELECT * FROM member WHERE deleted_at IS NULL AND (name LIKE ? ESCAPE '\\' OR "
+            return rows(db, "SELECT m.*, (SELECT COUNT(*) FROM member i WHERE i.inviter_member_id=m.id AND i.deleted_at IS NULL) AS invited_count FROM member m WHERE m.deleted_at IS NULL AND (m.name LIKE ? ESCAPE '\\' OR "
                 + "COALESCE(phone,'') LIKE ? ESCAPE '\\' OR member_no LIKE ? ESCAPE '\\') ORDER BY created_at,id LIMIT 50 OFFSET ?",
                 pattern, pattern, pattern, offset);
         }
         if (path.startsWith("members/")) {
             String id = path.substring(8);
-            return object("member", require(db, "member", id),
+            JSONObject member = require(db, "member", id);
+            member.put("invited_count", scalar(db, "SELECT COUNT(*) AS value FROM member WHERE inviter_member_id=? AND deleted_at IS NULL", id));
+            return object("member", member,
                 "cards", rows(db, "SELECT c.*,t.name AS type_name,t.mode FROM member_card c JOIN card_type t "
                     + "ON c.card_type_id=t.id WHERE member_id=? ORDER BY c.created_at,c.id", id),
                 "points", require(db, "points_account", id),
@@ -199,7 +218,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             String id = uid();
             insert(db, "member", object("id", id, "shop_id", ctx.getString("shop_id"),
                 "member_no", "M" + id.replace("-", ""), "name", string(input, "name", 200, true),
-                "phone", phone(input), "remark", optionalText(input, "remark", 1000), "created_at", stamp, "updated_at", stamp));
+                "phone", phone(input), "inviter_name", optionalNullableText(input, "inviter_name", 200), "inviter_member_id", optionalNullableText(input, "inviter_member_id", 128), "remark", optionalText(input, "remark", 1000), "created_at", stamp, "updated_at", stamp));
             insert(db, "points_account", object("member_id", id, "updated_at", stamp));
             result = require(db, "member", id);
             emit(db, ctx, "MEMBER_CREATED", id, result);
@@ -213,6 +232,8 @@ public final class LocalStore extends SQLiteOpenHelper {
             if (input.has("name")) { updates.put("name", string(input, "name", 200, true)); }
             if (input.has("phone")) { updates.put("phone", phone(input)); }
             if (input.has("remark")) { updates.put("remark", string(input, "remark", 1000, false)); }
+            if (input.has("inviter_name")) { updates.put("inviter_name", optionalNullableText(input, "inviter_name", 200)); }
+            if (input.has("inviter_member_id")) { updates.put("inviter_member_id", optionalNullableText(input, "inviter_member_id", 128)); }
             if (input.has("status")) { updates.put("status", integer(input, "status", 0, 1)); }
             if (updates.length() == 0) { reject("INVALID_INPUT", "没有要更新的资料"); }
             updates.put("version", version + 1).put("updated_at", stamp);
@@ -308,8 +329,8 @@ public final class LocalStore extends SQLiteOpenHelper {
 
     private static void validateFields(String action, JSONObject input) {
         String fields;
-        if (action.equals("create-member")) { fields = "name phone remark"; }
-        else if (action.equals("update-member")) { fields = "member_id version name phone remark status"; }
+        if (action.equals("create-member")) { fields = "name phone inviter_name inviter_member_id remark"; }
+        else if (action.equals("update-member")) { fields = "member_id version name phone inviter_name inviter_member_id remark status"; }
         else if (action.equals("open-card")) { fields = "member_id card_type_id expire_at"; }
         else if (action.equals("card-status")) { fields = "card_id version status"; }
         else if (action.equals("transact")) { fields = "card_id kind amount times source_id remark"; }
@@ -356,7 +377,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         } finally { cursor.close(); }
     }
 
-    private static long scalar(SQLiteDatabase db, String sql) throws JSONException { return rows(db, sql).getJSONObject(0).getLong("value"); }
+    private static long scalar(SQLiteDatabase db, String sql, String... args) throws JSONException { return rows(db, sql, args).getJSONObject(0).getLong("value"); }
     private static JSONObject require(SQLiteDatabase db, String table, String id) throws JSONException {
         // Table identifiers here are internal constants, never request values.
         JSONArray result = rows(db, "SELECT * FROM " + table + " WHERE " + (table.equals("points_account") ? "member_id" : "id") + "=?", id);
@@ -391,6 +412,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         return ((String) value).trim();
     }
     private static String optionalText(JSONObject input, String key, int max) { return input.has(key) ? string(input, key, max, false) : ""; }
+    private static Object optionalNullableText(JSONObject input, String key, int max) { return !input.has(key) || input.isNull(key) ? JSONObject.NULL : string(input, key, max, false); }
     private static Object phone(JSONObject input) { return input.isNull("phone") ? JSONObject.NULL : string(input, "phone", 32, true); }
     private static long integer(JSONObject input, String key, long min, long max) {
         Object value = input.opt(key);

@@ -25,6 +25,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 /** API 19 standalone terminal: APK assets -> native bridge -> device-private SQLite. */
 public class MainActivity extends Activity {
+    private static final String CLOUD_ENDPOINT = "https://liteshop.250886.xyz";
     private static final String ORIGIN = "http://liteshop.invalid";
     private WebView web;
     private TextView status;
@@ -128,9 +129,8 @@ public class MainActivity extends Activity {
     private void configureCloud() {
         LinearLayout fields = new LinearLayout(this);
         fields.setOrientation(LinearLayout.VERTICAL); fields.setPadding(24, 8, 24, 8);
-        final android.widget.EditText endpoint = new android.widget.EditText(this);
-        endpoint.setSingleLine(true); endpoint.setHint("Cloud API 地址；留空关闭同步");
-        endpoint.setText(prefs.getString("cloud_endpoint", "")); fields.addView(endpoint);
+        final android.widget.TextView endpoint = new android.widget.TextView(this);
+        endpoint.setText("云端地址：" + CLOUD_ENDPOINT); fields.addView(endpoint);
         final android.widget.EditText token = new android.widget.EditText(this);
         token.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         token.setSingleLine(true); token.setHint("终端同步令牌"); token.setText(prefs.getString("cloud_token", "")); fields.addView(token);
@@ -140,12 +140,11 @@ public class MainActivity extends Activity {
             @Override public void onShow(DialogInterface ignored) {
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
                     @Override public void onClick(View v) {
-                        String base = endpoint.getText().toString().trim();
                         String key = token.getText().toString();
-                        if (!base.isEmpty() && (!(base.startsWith("https://") || base.startsWith("http://")) || key.length() < 16)) {
-                            endpoint.setError("请输入 Cloud API 地址和至少 16 位令牌"); return;
+                        if (key.length() < 16) {
+                            token.setError("请输入至少 16 位令牌"); return;
                         }
-                        prefs.edit().putString("cloud_endpoint", base.replaceAll("/+$", ""))
+                        prefs.edit().putString("cloud_endpoint", CLOUD_ENDPOINT)
                             .putString("cloud_token", key).apply();
                         dialog.dismiss(); syncCloud();
                     }
@@ -161,9 +160,9 @@ public class MainActivity extends Activity {
     }
 
     private void uploadCloud() {
-        final String endpoint = prefs.getString("cloud_endpoint", "");
+        final String endpoint = CLOUD_ENDPOINT;
         final String token = prefs.getString("cloud_token", "");
-        if (endpoint.length() == 0) { store.setCloudState("NOT_CONFIGURED"); return; }
+        if (token.length() == 0) { store.setCloudState("NOT_CONFIGURED"); return; }
         store.setCloudState("SYNCING");
         final boolean ok = new CloudSync(store).upload(endpoint, token);
         boolean pending = true;
@@ -237,7 +236,7 @@ public class MainActivity extends Activity {
                 worker.execute(new Runnable() {
                     @Override public void run() {
                         LocalStore.Response result = store.handle(method, path, body);
-                        if ("POST".equals(method) && result.code == 200 && !prefs.getString("cloud_endpoint", "").isEmpty()) {
+                        if ("POST".equals(method) && result.code == 200 && !prefs.getString("cloud_token", "").isEmpty()) {
                             store.setCloudState("PENDING");
                         }
                         deliver(id, result.code, result.body);
