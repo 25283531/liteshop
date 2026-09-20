@@ -76,6 +76,7 @@ class ShopService:
         ctx = self.repo.context()
         if not ctx:
             return
+        self.ctx = ctx
         with self.repo.atomic():
             for preset in self.PRESET_CARD_TYPES:
                 row = self.repo.conn.execute("SELECT id FROM card_type WHERE shop_id=? AND category_code=?", (ctx["shop_id"], preset["category_code"])).fetchone()
