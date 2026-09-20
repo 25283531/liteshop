@@ -31,6 +31,7 @@ async function main() {
     await page.locator('#token').fill(token);
     await page.locator('#login-form button').click();
     await page.waitForFunction(() => document.querySelector('#connection').textContent.indexOf('已连接') >= 0);
+    assert.equal(await page.locator('#message').evaluate(element => getComputedStyle(element).display), 'none', 'stale login notice must clear after connection');
     await page.locator('#new-member').click();
     await page.locator('#f-name').fill('张三 <b>演示会员</b>');
     await page.locator('#f-phone').fill('13800000000');

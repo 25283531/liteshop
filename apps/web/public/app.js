@@ -53,14 +53,18 @@
     }
     function status() {
         api("GET", "status", null, function (error, data) {
-            el("connection").textContent = error ? "本地账本不可用" : "● 本地账本已连接";
+            el("connection").innerHTML = error ? '<span class="dot dot-error"></span>本地账本不可用' : '<span class="dot dot-ok"></span>本地账本已连接';
             if (error) { notice(error, true); return; }
+            el("message").style.display = "none";
             el("login").hidden = true;
             el("shop-name").textContent = data.shop.name;
             el("member-count").textContent = data.member_count;
             el("event-count").textContent = data.pending_events;
             var syncNames = {NOT_CONFIGURED: "未配置", SYNCING: "同步中", OFFLINE: "离线待同步", PENDING: "待同步", SYNCED: "已同步"};
             el("cloud-sync").textContent = syncNames[data.cloud_sync] || "状态未知";
+            var cloudStates = {NOT_CONFIGURED: {text: "云端服务未配置", cls: "dot-gray"}, SYNCING: {text: "云端服务已连接", cls: "dot-ok"}, OFFLINE: {text: "云端服务未连接", cls: "dot-error"}, PENDING: {text: "云端服务已连接", cls: "dot-ok"}, SYNCED: {text: "云端服务已连接", cls: "dot-ok"}};
+            var cloud = cloudStates[data.cloud_sync] || cloudStates.NOT_CONFIGURED;
+            el("cloud-connection").innerHTML = '<span class="dot ' + cloud.cls + '"></span>' + cloud.text;
         });
     }
     function search() {
