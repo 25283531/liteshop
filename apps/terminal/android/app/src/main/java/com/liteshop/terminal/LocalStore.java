@@ -89,8 +89,8 @@ public final class LocalStore extends SQLiteOpenHelper {
             emit(db, ctx, "SHOP_INITIALIZED", shop, require(db, "shop", shop));
             for (String mode : new String[] {"STORED", "COUNT"}) {
                 String id = uid();
-                insert(db, "card_type", object("id", id, "shop_id", shop, "name",
-                    mode.equals("STORED") ? "储值卡" : "次卡", "mode", mode, "created_at", stamp));
+                insert(db, "card_type", object("id", id, "shop_id", shop, "category_code", mode, "name",
+                    mode.equals("STORED") ? "储值会员" : "计次会员", "mode", mode, "status", 1, "created_at", stamp));
                 emit(db, ctx, "CARD_TYPE_CREATED", id, require(db, "card_type", id));
             }
             String[] presetCodes = new String[] {"POINTS", "RECHARGE_GIFT", "DISCOUNT"};

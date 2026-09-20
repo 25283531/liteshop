@@ -116,7 +116,7 @@
         if (action === "new" || action === "edit") { title = action === "new" ? "新增会员" : "编辑会员"; fields = field("name", "会员姓名", action === "edit" ? m.name : "", true) + field("phone", "手机号（可选）", action === "edit" ? m.phone : "") + field("inviter_name", "邀请人（可稍后补填）", action === "edit" ? m.inviter_name : "") + field("remark", "备注", action === "edit" ? m.remark : ""); }
         else if (action === "member-status") { title = m.status ? "停用会员" : "启用会员"; fields = '<p>停用后将无法开卡和进行交易，已有账本记录保留。</p>'; }
         else if (action === "delete-member") { title = "删除会员数据"; fields = '<p>删除后会员将从本地搜索中隐藏，账本和审计记录仍保留。此操作需要本地设置密码。</p>' + '<label for="f-password">本地设置密码</label><input id="f-password" type="password" required autocomplete="current-password">'; }
-        else if (action === "open") { title = "开通会员卡"; fields = select("type", "卡类型", state.types.map(function (t) { return [t.id, t.mode === "STORED" ? "储值卡" : "次卡"]; })); }
+        else if (action === "open") { title = "开通会员卡"; fields = select("type", "卡类型", state.types.filter(function (t) { return Number(t.status) === 1; }).map(function (t) { return [t.id, t.name + (t.mode === "COUNT" ? " · 计次" : " · 储值")]; })); }
         else if (action === "points") { title = "调整积分"; fields = field("quantity", "积分变动（增加填正数，扣除填负数）", "", true) + field("remark", "调整原因", "", true); }
         else if (action === "card-status") { title = "修改卡片状态"; fields = select("status", "卡片状态", [["ACTIVE", "正常"], ["LOST", "挂失"], ["DISABLED", "停用"]], card.status); }
         else {
