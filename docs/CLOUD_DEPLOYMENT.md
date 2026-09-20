@@ -2,6 +2,22 @@
 
 ## Docker 部署
 
+部署方式有两种：Cloudflare Workers + D1 适合无服务器托管；Debian/Ubuntu 一键脚本使用 Docker 运行 Python Cloud API。两者 API 路径和终端同步协议保持一致。
+
+## Cloudflare Workers + D1
+
+进入 `apps/cloud/workers`，按 [Workers 部署说明](../apps/cloud/workers/README.md) 执行 `wrangler d1 create`、初始化 `schema.sql`、设置两个 secret 后部署。Workers 版本使用 D1，不读取 Docker 的 `/data/cloud.sqlite`；从 Docker 迁移时需要重新上传未同步事件或制作专用数据迁移，不要直接把 SQLite 文件上传到 D1。
+
+## Debian/Ubuntu 一键部署
+
+在仓库根目录运行：
+
+```bash
+sudo bash apps/cloud/deploy-debian.sh
+```
+
+脚本安装 Docker、生成 `apps/cloud/.env`、构建并启动 Compose 服务，然后检查 `/healthz`。它不会自动开放公网端口或配置证书；生产环境请在前面配置 Nginx/Caddy/Cloudflare Tunnel，并只通过 HTTPS 暴露服务。
+
 需要云端服务器安装 Docker Engine 与 Compose。仓库根目录执行 README 中的令牌生成和 `docker compose -f apps/cloud/docker-compose.yml up -d --build`。Compose 的 build context 是仓库根目录，Dockerfile 为 `apps/cloud/Dockerfile`，服务默认端口 8787。
 
 令牌也可保存于云端服务器的 `apps/cloud/.env`（不要提交到 Git），分别设置 `LITESHOP_TERMINAL_TOKEN` 和 `LITESHOP_MINIAPP_TOKEN`。两者须使用不同的随机值。`cloud-data` 命名卷挂载 `/data`，数据库为 `/data/cloud.sqlite`，重新创建容器会保留；不要执行 `down -v` 删除数据卷。

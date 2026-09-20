@@ -7,7 +7,7 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 ```text
                  微信小程序（客户端待实现）
                             │
-                    Cloud API（Docker）
+                    Cloud API（Workers/Docker）
                        只读数据投影
                             ▲
                  Event Sync / 幂等上传
@@ -34,6 +34,18 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 - Android 实机与外设验收仍待完成，构建和自动化测试说明见下文。
 
 详细进度见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
+
+## 云端部署（Cloudflare Workers 或 Debian/Ubuntu）
+
+Cloudflare 部署使用 Workers + D1，命令和数据库初始化见 [Workers 部署说明](apps/cloud/workers/README.md)。它适合无服务器托管，固定域名可以绑定到 Worker 自定义域名。
+
+Debian/Ubuntu 可在仓库根目录执行一键脚本：
+
+```bash
+sudo bash apps/cloud/deploy-debian.sh
+```
+
+脚本会安装 Docker、生成令牌、启动 Cloud API 并检查健康状态。公网生产环境仍需配置 HTTPS 反向代理或 Cloudflare Tunnel。完整边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。
 
 ## 云端 Docker 与 GitHub 构建
 
