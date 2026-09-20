@@ -28,6 +28,19 @@ sudo bash apps/cloud/deploy-debian.sh
 
 令牌也可保存于云端服务器的 `apps/cloud/.env`（不要提交到 Git），分别设置 `LITESHOP_TERMINAL_TOKEN` 和 `LITESHOP_MINIAPP_TOKEN`。两者须使用不同的随机值。`cloud-data` 命名卷挂载 `/data`，数据库为 `/data/cloud.sqlite`，重新创建容器会保留；不要执行 `down -v` 删除数据卷。
 
+部署映射清单：
+
+| 项目 | 配置 | 用途 |
+| --- | --- | --- |
+| 必填环境变量 | `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` | 分别用于终端同步鉴权和云端内部读取鉴权 |
+| 网络端口 | `8787:8787` | 对外提供 Cloud API；生产环境应通过 HTTPS 反向代理转发 |
+| 默认持久化 | Docker 卷 `cloud-data:/data` | 保存 `/data/cloud.sqlite` 云端数据库和同步投影 |
+| 可选宿主机目录 | `./apps/cloud/data:/data` | 需要直接管理数据库文件或执行文件级备份时使用；与命名卷二选一 |
+| 密钥文件 | `apps/cloud/.env` | 保存环境变量，不是数据库目录，不应提交或公开 |
+| 容器应用目录 | `/app` | 镜像内的 Python 应用代码，无需映射 |
+
+选择宿主机目录时，先在服务器创建 `apps/cloud/data` 并限制权限，再启动 Compose。该目录只保存云端副本；安卓机顶盒本地 SQLite 仍是交易事实源。
+
 ```bash
 docker compose -f apps/cloud/docker-compose.yml ps
 docker compose -f apps/cloud/docker-compose.yml logs --tail=100

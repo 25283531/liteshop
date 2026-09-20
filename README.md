@@ -39,6 +39,39 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 
 云端服务统一使用 Docker 运行 Python Cloud API。可以在 Debian/Ubuntu 服务器执行一键脚本，也可以在 GitHub Actions 页面手动构建镜像。
 
+### Docker 配置清单
+
+运行容器前必须设置以下两个环境变量。它们是接口鉴权令牌，应使用两个不同的随机值（建议至少 32 字节），不要提交到 Git 或写入镜像：
+
+| 环境变量 | 是否必填 | 用途 |
+| --- | --- | --- |
+| `LITESHOP_TERMINAL_TOKEN` | 是 | 安卓机顶盒上传同步事件时使用的 Bearer 令牌 |
+| `LITESHOP_MINIAPP_TOKEN` | 是 | 云端内部读取接口使用的令牌；不要放入微信小程序前端 |
+
+Compose 会将容器的 `8787` 端口发布到服务器的 `8787` 端口：
+
+| 映射 | 用途 |
+| --- | --- |
+| `8787:8787` | Cloud API HTTP 服务；健康检查地址为 `http://服务器地址:8787/healthz` |
+
+数据库必须持久化到容器外。默认 Compose 配置使用 Docker 命名卷 `cloud-data`，映射到容器内的 `/data`；数据库文件为 `/data/cloud.sqlite`。该卷保存云端事件、会员/卡/积分查询投影和终端登记信息，删除容器不会删除数据，**不要执行 `docker compose down -v`**。
+
+如果需要在服务器文件系统中直接看到数据，可将 `apps/cloud/docker-compose.yml` 中的：
+
+```yaml
+volumes:
+  - cloud-data:/data
+```
+
+替换为：
+
+```yaml
+volumes:
+  - ./apps/cloud/data:/data
+```
+
+此时宿主机目录 `apps/cloud/data/` 用于保存云端 SQLite 数据，必须限制访问权限并纳入备份；不要把它提交到 Git。`apps/cloud/.env` 仅保存两个环境变量，属于部署配置和密钥文件，也不要提交。容器内 `/app` 只是应用代码目录，不需要映射，镜像更新时会被替换。
+
 Debian/Ubuntu 可在仓库根目录执行一键脚本：
 
 ```bash
