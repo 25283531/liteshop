@@ -9,6 +9,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -17,6 +19,8 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.FrameLayout;
+import android.os.Handler;
 import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -34,6 +38,12 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private volatile boolean destroyed;
     private volatile long readyAt;
+    private FrameLayout root;
+    private WebView screensaver;
+    private boolean screensaverShown;
+    private long lastActivityAt;
+    private final Handler idleHandler = new Handler();
+    private final Runnable idleCheck = new Runnable() { @Override public void run() { checkScreensaver(); idleHandler.postDelayed(this, 10000); } };
     private boolean localFinished, syncFinished;
     private final ThreadPoolExecutor worker = new ThreadPoolExecutor(
         1, 1, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(24)) {
@@ -51,6 +61,7 @@ public class MainActivity extends Activity {
         super.onCreate(saved);
         store = new LocalStore(this);
         prefs = getSharedPreferences("terminal", MODE_PRIVATE);
+        root = new FrameLayout(this);
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         LinearLayout bar = new LinearLayout(this);
@@ -125,7 +136,8 @@ public class MainActivity extends Activity {
         layout.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
         // Keep the native controls at the bottom so the member workspace remains the visual focus.
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
-        setContentView(layout);
+        root.addView(layout, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -162,9 +174,74 @@ public class MainActivity extends Activity {
             }
         });
         loadHome();
+        lastActivityAt = System.currentTimeMillis();
+        idleHandler.postDelayed(idleCheck, 10000);
         syncWorker.scheduleWithFixedDelay(new Runnable() {
             @Override public void run() { uploadCloud(); }
         }, 0, 30, TimeUnit.SECONDS);
+    }
+
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        if (event.getAction() == MotionEvent.ACTION_DOWN) { wakeScreensaver(); }
+        lastActivityAt = System.currentTimeMillis();
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (screensaverShown) { wakeScreensaver(); return true; }
+        if (keyCode == KeyEvent.KEYCODE_F10) { lastActivityAt = 0; checkScreensaver(); return true; }
+        lastActivityAt = System.currentTimeMillis();
+        return super.onKeyDown(keyCode, event);
+    }
+
+    private void checkScreensaver() {
+        if (destroyed || screensaverShown) { return; }
+        try {
+            JSONObject settings = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data").optJSONObject("settings");
+            JSONObject saver = settings == null ? null : settings.optJSONObject("screensaver");
+            if (saver != null && saver.optBoolean("enabled", false)) {
+                long minutes = Math.max(1, Math.min(1440, saver.optLong("timeout_minutes", 10)));
+                if (System.currentTimeMillis() - lastActivityAt >= minutes * 60000L) { showScreensaver(saver); }
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private void showScreensaver(JSONObject saver) {
+        final String url = saver.optString("media_url", "").trim();
+        if (!(url.startsWith("https://") || url.startsWith("http://"))) { return; }
+        screensaver = new WebView(this);
+        screensaver.setBackgroundColor(android.graphics.Color.BLACK);
+        WebSettings s = screensaver.getSettings(); s.setJavaScriptEnabled(false); s.setDomStorageEnabled(false); s.setMediaPlaybackRequiresUserGesture(false);
+        String type = saver.optString("media_type", "auto");
+        boolean video = "video".equals(type) || ("auto".equals(type) && (url.toLowerCase().endsWith(".mp4") || url.toLowerCase().endsWith(".webm")));
+        String safe = JSONObject.quote(url);
+        String html = video ? "<html><body style='margin:0;background:#000;overflow:hidden'><video autoplay loop muted playsinline style='width:100%;height:100%;object-fit:contain' src=" + safe + "></video></body></html>"
+            : "<html><body style='margin:0;background:#000;overflow:hidden'><img style='width:100%;height:100%;object-fit:contain' src=" + safe + "></body></html>";
+        screensaver.loadDataWithBaseURL(url, html, "text/html", "UTF-8", null);
+        root.addView(screensaver, new FrameLayout.LayoutParams(-1, -1));
+        screensaverShown = true;
+    }
+
+    private void wakeScreensaver() {
+        if (!screensaverShown) { return; }
+        try {
+            JSONObject settings = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data").optJSONObject("settings");
+            JSONObject saver = settings == null ? null : settings.optJSONObject("screensaver");
+            if (saver != null && saver.optBoolean("require_password", false)) { promptScreensaverPassword(); return; }
+        } catch (Exception ignored) { }
+        unlockScreensaver();
+    }
+
+    private void unlockScreensaver() {
+        screensaverShown = false; lastActivityAt = System.currentTimeMillis();
+        if (screensaver != null) { root.removeView(screensaver); screensaver.destroy(); screensaver = null; }
+    }
+
+    private void promptScreensaverPassword() {
+        final android.widget.EditText input = new android.widget.EditText(this); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); input.setSingleLine(true); input.setHint("本地设置密码");
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("解锁 LiteShop").setMessage("请输入本地设置密码继续营业").setView(input).setPositiveButton("解锁", null).setNegativeButton("稍后", null).create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() { @Override public void onShow(DialogInterface ignored) { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { if (store.checkLocalPassword(input.getText().toString())) { dialog.dismiss(); unlockScreensaver(); } else { input.setError("密码错误"); } } }); } });
+        dialog.show();
     }
 
     private void compactButton(Button button) {

@@ -221,7 +221,13 @@
             if (error) { notice(error, true); return; }
             el("shop-setting-name").value = data.name || "";
             api("GET", "card-types", null, function (cardError, cards) {
-                if (!cardError) { el("card-type-settings").innerHTML = cards.map(cardTypeField).join(""); }
+            if (!cardError) { el("card-type-settings").innerHTML = cards.map(cardTypeField).join(""); }
+                var saver = (data.settings && data.settings.screensaver) || {};
+                el("screensaver-enabled").checked = !!saver.enabled;
+                el("screensaver-timeout").value = saver.timeout_minutes || 10;
+                el("screensaver-url").value = saver.media_url || "";
+                el("screensaver-type").value = saver.media_type || "auto";
+                el("screensaver-password").checked = !!saver.require_password;
                 el("settings-error").textContent = ""; el("settings-modal").hidden = false; el("shop-setting-name").focus();
             });
         });
@@ -232,7 +238,9 @@
         event.preventDefault();
         var types = [], cards = el("card-type-settings").querySelectorAll(".card-type-setting");
         for (var i = 0; i < cards.length; i++) { var row = cards[i], code = row.getAttribute("data-card-code"), number = function (field, fallback) { var n = Number(row.querySelector('[data-card-field="' + field + '"]').value); return isFinite(n) ? n : fallback; }; types.push({category_code: code, name: row.querySelector('[data-card-field="name"]').value, enabled: row.querySelector('[data-card-field="enabled"]').checked, gift_percent: number("gift_percent", 0), discount_percent: number("discount_percent", 100), points_rate: number("points_rate", 0)}); }
-        api("POST", "commands/update-settings", {request_id: "settings-" + new Date().getTime(), name: el("shop-setting-name").value, settings: {card_types: types}, local_password: el("local-setting-password").value || null}, function (error) {
+        var timeout = Number(el("screensaver-timeout").value); if (!isFinite(timeout) || timeout < 1 || timeout > 1440) { el("settings-error").textContent = "屏保时间必须为 1-1440 分钟"; return; }
+        var settings = {card_types: types, screensaver: {enabled: el("screensaver-enabled").checked, timeout_minutes: Math.round(timeout), media_url: el("screensaver-url").value.trim(), media_type: el("screensaver-type").value, require_password: el("screensaver-password").checked}};
+        api("POST", "commands/update-settings", {request_id: "settings-" + new Date().getTime(), name: el("shop-setting-name").value, settings: settings, local_password: el("local-setting-password").value || null}, function (error) {
             if (error) { el("settings-error").textContent = error; return; }
             el("settings-modal").hidden = true; el("local-setting-password").value = ""; notice("设置已保存", false); connect();
         });

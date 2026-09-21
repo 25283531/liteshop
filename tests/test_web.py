@@ -205,6 +205,12 @@ class WebTests(unittest.TestCase):
         self.assertEqual(categories["POINTS"]["name"], "积分会员")
         self.assertEqual(categories["RECHARGE_GIFT"]["status"], 0)
 
+    def test_screensaver_settings_are_persisted(self):
+        self.command("update-settings", settings={"screensaver": {"enabled": True, "timeout_minutes": 5, "media_url": "https://example.com/ad.mp4", "media_type": "video", "require_password": True}})
+        settings = self.get("settings")
+        self.assertTrue(settings["settings"]["screensaver"]["enabled"])
+        self.assertEqual(settings["settings"]["screensaver"]["timeout_minutes"], 5)
+
 
 if __name__ == "__main__":
     unittest.main()

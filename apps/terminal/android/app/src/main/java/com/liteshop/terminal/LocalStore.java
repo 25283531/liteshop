@@ -212,7 +212,11 @@ public final class LocalStore extends SQLiteOpenHelper {
         if (path.equals("settings")) {
             JSONObject shop = require(db, "shop", context(db).getString("shop_id"));
             JSONObject device = require(db, "device", context(db).getString("device_id"));
-            return object("id", shop.getString("id"), "name", shop.getString("name"), "has_local_password", !shop.isNull("local_password_hash"), "serial_no", device.getString("serial_no"));
+            JSONObject settings = new JSONObject();
+            if (!shop.isNull("settings_json")) {
+                try { settings = new JSONObject(shop.getString("settings_json")); } catch (JSONException ignored) { }
+            }
+            return object("id", shop.getString("id"), "name", shop.getString("name"), "has_local_password", !shop.isNull("local_password_hash"), "serial_no", device.getString("serial_no"), "settings", settings);
         }
         if (path.equals("members") || path.startsWith("members?")) {
             String query = "", offset = "0";
@@ -439,6 +443,13 @@ public final class LocalStore extends SQLiteOpenHelper {
             if (!MessageDigest.isEqual(actual, expected)) { reject("PASSWORD_INVALID", "本地设置密码错误"); }
         } catch (Rejected e) { throw e; }
         catch (Exception e) { reject("PASSWORD_INVALID", "本地设置密码错误"); }
+    }
+
+    public synchronized boolean checkLocalPassword(String password) {
+        try {
+            verifyLocalPassword(getReadableDatabase(), password);
+            return true;
+        } catch (Exception e) { return false; }
     }
 
     private static byte[] hex(String value) {
