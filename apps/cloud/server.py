@@ -490,6 +490,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/app.js":
             self.serve_static("app.js", "text/javascript; charset=utf-8")
             return
+        if parsed.path == "/register":
+            self.serve_static("register.html", "text/html; charset=utf-8")
+            return
+        if parsed.path == "/register.js":
+            self.serve_static("register.js", "text/javascript; charset=utf-8")
+            return
         if parsed.path == "/account":
             self.serve_static("account.html", "text/html; charset=utf-8")
             return

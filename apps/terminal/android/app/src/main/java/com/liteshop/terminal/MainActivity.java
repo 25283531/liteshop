@@ -2,6 +2,8 @@ package com.liteshop.terminal;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
+import android.net.Uri;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -45,6 +47,7 @@ public class MainActivity extends Activity {
     private FrameLayout root;
     private WebView screensaver;
     private boolean screensaverShown;
+    private static final int PICK_SCREENSAVER_MEDIA = 4107;
     private long lastActivityAt;
     private final Handler idleHandler = new Handler();
     private final Runnable idleCheck = new Runnable() { @Override public void run() { checkScreensaver(); idleHandler.postDelayed(this, 10000); } };
@@ -144,10 +147,11 @@ public class MainActivity extends Activity {
 
     private void showScreensaver(JSONObject saver) {
         final String url = saver.optString("media_url", "").trim();
-        if (!(url.startsWith("https://") || url.startsWith("http://"))) { return; }
+        // Screen saver media must come from device storage; network URLs are rejected.
+        if (!(url.startsWith("content://") || url.startsWith("file://"))) { return; }
         screensaver = new WebView(this);
         screensaver.setBackgroundColor(android.graphics.Color.BLACK);
-        WebSettings s = screensaver.getSettings(); s.setJavaScriptEnabled(false); s.setDomStorageEnabled(false); s.setMediaPlaybackRequiresUserGesture(false);
+        WebSettings s = screensaver.getSettings(); s.setJavaScriptEnabled(false); s.setDomStorageEnabled(false); s.setAllowContentAccess(true); s.setAllowFileAccess(true); s.setMediaPlaybackRequiresUserGesture(false);
         String type = saver.optString("media_type", "auto");
         boolean video = "video".equals(type) || ("auto".equals(type) && (url.toLowerCase().endsWith(".mp4") || url.toLowerCase().endsWith(".webm")));
         String safe = JSONObject.quote(url);
@@ -206,6 +210,31 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("登录/注册云端")
             .setMessage("请访问 liteshop.250886.xyz 进行注册/登录，并在云端绑定当前设备。\n\n当前设备的序列号：" + serial)
             .setPositiveButton("知道了", null).show();
+    }
+
+    private void pickScreensaverMedia() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "video/*"});
+        try { startActivityForResult(intent, PICK_SCREENSAVER_MEDIA); }
+        catch (Exception ignored) {
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.addCategory(Intent.CATEGORY_OPENABLE); fallback.setType("*/*");
+            try { startActivityForResult(fallback, PICK_SCREENSAVER_MEDIA); } catch (Exception ignoredAgain) { }
+        }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_SCREENSAVER_MEDIA || resultCode != RESULT_OK || data == null || data.getData() == null) { return; }
+        Uri uri = data.getData();
+        try { getContentResolver().takePersistableUriPermission(uri, data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)); } catch (Exception ignored) { }
+        String mime = getContentResolver().getType(uri);
+        if (mime == null) { mime = ""; }
+        if (web != null) {
+            web.evaluateJavascript("window.LiteShopMediaPicked && window.LiteShopMediaPicked(" + JSONObject.quote(uri.toString()) + "," + JSONObject.quote(mime) + ");", null);
+        }
     }
 
     private void refreshCloudAccount() {
@@ -292,6 +321,7 @@ public class MainActivity extends Activity {
     }
     public final class TerminalBridge {
         @JavascriptInterface public void showCloudLogin() { runOnUiThread(new Runnable() { @Override public void run() { MainActivity.this.showCloudLogin(); } }); }
+        @JavascriptInterface public void pickScreensaverMedia() { runOnUiThread(new Runnable() { @Override public void run() { MainActivity.this.pickScreensaverMedia(); } }); }
         @JavascriptInterface public String getCloudAccountInfo() {
             try {
                 String username = prefs.getString("cloud_username", "");

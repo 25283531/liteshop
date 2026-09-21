@@ -179,6 +179,13 @@ class ShopService:
             if settings is not None:
                 if not isinstance(settings, dict):
                     raise BusinessError("INVALID_INPUT", "Invalid settings")
+                screensaver = settings.get("screensaver")
+                if screensaver is not None:
+                    if not isinstance(screensaver, dict):
+                        raise BusinessError("INVALID_INPUT", "Invalid screensaver settings")
+                    media_url = screensaver.get("media_url", "")
+                    if not isinstance(media_url, str) or (media_url and not (media_url.startswith("content://") or media_url.startswith("file://"))):
+                        raise BusinessError("INVALID_INPUT", "Screensaver media must be stored on the Android terminal")
                 updates["settings_json"] = encode(settings)
                 card_types = settings.get("card_types")
                 if card_types is not None:

@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiteShop 新账户注册</title><link rel="stylesheet" href="/account/app.css"></head>
+<body>
+<header><div><h1>LiteShop 云端服务</h1><p id="status">创建账户后即可绑定安卓终端</p></div></header>
+<main class="auth-shell"><section class="panel auth-card"><h2>新账户注册</h2><p class="muted">使用邮箱注册，成功后我们会向邮箱发送包含注册用户名的邮件。</p>
+<form id="register"><label for="reg-email">邮箱</label><input id="reg-email" type="email" autocomplete="email" placeholder="请输入邮箱" required><label for="reg-user">用户名</label><input id="reg-user" autocomplete="username" minlength="2" maxlength="64" placeholder="请输入用户名" required><label for="reg-password">密码</label><input id="reg-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="至少 8 位" required><button class="primary-action">注册并发送邮件</button></form>
+<div class="auth-links"><a href="/">返回登录</a></div></section></main>
+<script src="/register.js"></script>
+</body></html>

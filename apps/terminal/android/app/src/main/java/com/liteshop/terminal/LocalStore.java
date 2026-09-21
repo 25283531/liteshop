@@ -275,7 +275,15 @@ public final class LocalStore extends SQLiteOpenHelper {
             JSONObject shop = require(db, "shop", ctx.getString("shop_id"));
             ContentValues values = new ContentValues();
             if (input.has("name")) { values.put("name", string(input, "name", 200, true)); }
-            if (input.has("settings") && !input.isNull("settings")) { values.put("settings_json", input.getJSONObject("settings").toString()); }
+            if (input.has("settings") && !input.isNull("settings")) {
+                JSONObject settings = input.getJSONObject("settings");
+                JSONObject saver = settings.optJSONObject("screensaver");
+                if (saver != null) {
+                    String media = saver.optString("media_url", "");
+                    if (media.length() != 0 && !(media.startsWith("content://") || media.startsWith("file://"))) { reject("INVALID_INPUT", "屏保只能使用安卓机顶盒本地存储资源"); }
+                }
+                values.put("settings_json", settings.toString());
+            }
             if (input.has("local_password") && !input.isNull("local_password")) {
                 String password = input.getString("local_password");
                 if (password.length() == 0) { values.putNull("local_password_hash"); }

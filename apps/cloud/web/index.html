@@ -1,3 +1,26 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiteShop 云端服务</title><link rel="stylesheet" href="/account/app.css"></head>
-<body><header><div><h1>LiteShop 云端服务</h1><p id="status">请选择注册、登录或管理员入口</p></div></header><main><div class="grid"><section class="panel"><h2>用户注册</h2><p class="muted">使用邮箱注册云端账户，注册成功后会发送确认邮件。</p><form id="register"><input id="reg-email" type="email" placeholder="邮箱" required><input id="reg-user" placeholder="用户名" minlength="2" maxlength="64" required><input id="reg-password" type="password" placeholder="密码（至少 8 位）" minlength="8" required><button>注册</button></form></section><section class="panel"><h2>用户登录</h2><form id="user-login"><input id="user-email" type="email" placeholder="邮箱" required><input id="user-password" type="password" placeholder="密码" required><button>登录并进入云端</button></form></section></div><section class="panel"><h2>管理员入口</h2><p class="muted">管理员先验证专用账户名和密码，再输入部署时设置的管理 Token。</p><form id="admin-credentials"><input id="admin-username" autocomplete="username" placeholder="管理员账户名" required><input id="admin-password" type="password" autocomplete="current-password" placeholder="管理员密码" required><button>验证管理员账户</button></form><form id="admin-token" hidden><input id="token" type="password" placeholder="LITESHOP_ADMIN_TOKEN" required><button>进入管理台</button></form></section></main><script src="/app.js"></script></body></html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiteShop 云端登录</title><link rel="stylesheet" href="/account/app.css"></head>
+<body>
+<header><div><h1>LiteShop 云端服务</h1><p id="status">登录后管理已绑定的门店和终端</p></div></header>
+<main class="auth-shell">
+  <section class="panel auth-card">
+    <h2>登录</h2>
+    <p class="muted">普通用户使用注册邮箱登录；管理员使用管理员账户名登录。</p>
+    <form id="user-login">
+      <label for="login-identity">邮箱或管理员账号</label>
+      <input id="login-identity" autocomplete="username" placeholder="请输入邮箱或管理员账号" required>
+      <label for="login-password">密码</label>
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required>
+      <button class="primary-action">登录并进入云端</button>
+    </form>
+    <div id="admin-token-panel" hidden>
+      <hr><h3>管理员令牌</h3>
+      <p class="muted">管理员账户验证成功，请继续输入部署时设置的管理 Token。</p>
+      <form id="admin-token"><input id="token" type="password" autocomplete="off" placeholder="LITESHOP_ADMIN_TOKEN" required><button>进入管理台</button></form>
+    </div>
+    <div class="auth-links"><span>还没有云端账户？</span><a href="/register">新账户注册</a></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body></html>
