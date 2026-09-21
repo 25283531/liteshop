@@ -476,6 +476,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             self.serve_static("index.html", "text/html; charset=utf-8")
             return
+        if parsed.path in ("/admin", "/admin/"):
+            self.serve_static("admin.html", "text/html; charset=utf-8")
+            return
+        if parsed.path == "/app.js":
+            self.serve_static("app.js", "text/javascript; charset=utf-8")
+            return
         if parsed.path == "/account":
             self.serve_static("account.html", "text/html; charset=utf-8")
             return
@@ -487,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/admin/"):
             asset = parsed.path.removeprefix("/admin/")
             if asset in ("app.js", "app.css"):
-                self.serve_static(asset, "text/javascript; charset=utf-8" if asset.endswith(".js") else "text/css; charset=utf-8")
+                self.serve_static("admin-app.js" if asset == "app.js" else asset, "text/javascript; charset=utf-8" if asset.endswith(".js") else "text/css; charset=utf-8")
                 return
         if self.path == "/healthz":
             self.respond(200, {"ok": True, "service": "cloud-api"})
@@ -536,6 +542,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        if path == "/api/v1/admin/login":
+            try:
+                values = self.body()
+                username = values.get("username") if isinstance(values.get("username"), str) else ""
+                password = values.get("password") if isinstance(values.get("password"), str) else ""
+                if not self.server.admin_username or not self.server.admin_password or not hmac.compare_digest(username, self.server.admin_username) or not hmac.compare_digest(password, self.server.admin_password):
+                    raise ValueError("管理员账户名或密码错误")
+                self.respond(200, {"ok": True, "data": {"requires_token": True}, "message": "账户验证成功，请继续输入管理令牌"})
+            except ValueError as exc:
+                self.respond(401, {"ok": False, "error": {"code": "INVALID_ADMIN_CREDENTIALS", "message": str(exc)}})
+            return
         if path == "/api/v1/auth/register":
             try:
                 values = self.body()
@@ -549,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.respond(400, {"ok": False, "error": {"code": "INVALID_REGISTRATION", "message": str(exc)}})
             except (RuntimeError, OSError, smtplib.SMTPException) as exc:
-                self.respond(503, {"ok": False, "error": {"code": "MAIL_DELIVERY_FAILED", "message": "账号已创建，但注册邮件发送失败，请联系管理员"}})
+                self.respond(503, {"ok": False, "error": {"code": "MAIL_DELIVERY_FAILED", "message": "注册邮件发送失败，账号未创建，请稍后重试或联系管理员"}})
             return
         if path == "/api/v1/auth/login":
             try:
@@ -641,10 +658,12 @@ class Handler(BaseHTTPRequestHandler):
 
 class CloudServer(ThreadingHTTPServer):
     daemon_threads = True
-    def __init__(self, address, db, terminal_token, miniapp_token, admin_token=None):
+    def __init__(self, address, db, terminal_token, miniapp_token, admin_token=None, admin_username=None, admin_password=None):
         self.store = CloudStore(db)
         self.mailer = RegistrationMailer(self.store)
         self.tokens = {"terminal": terminal_token, "miniapp": miniapp_token, "admin": admin_token or miniapp_token}
+        self.admin_username = admin_username if admin_username is not None else os.environ.get("LITESHOP_ADMIN_USERNAME", "")
+        self.admin_password = admin_password if admin_password is not None else os.environ.get("LITESHOP_ADMIN_PASSWORD", "")
         super().__init__(address, Handler)
 
 
@@ -657,10 +676,12 @@ def main():
     terminal_token = os.environ.get("LITESHOP_TERMINAL_TOKEN")
     miniapp_token = os.environ.get("LITESHOP_MINIAPP_TOKEN")
     admin_token = os.environ.get("LITESHOP_ADMIN_TOKEN")
+    admin_username = os.environ.get("LITESHOP_ADMIN_USERNAME")
+    admin_password = os.environ.get("LITESHOP_ADMIN_PASSWORD")
     if not terminal_token or not miniapp_token or not admin_token:
         parser.error("LITESHOP_TERMINAL_TOKEN, LITESHOP_MINIAPP_TOKEN and LITESHOP_ADMIN_TOKEN are required")
     os.makedirs(os.path.dirname(os.path.abspath(args.db)), exist_ok=True)
-    server = CloudServer((args.host, args.port), args.db, terminal_token, miniapp_token, admin_token)
+    server = CloudServer((args.host, args.port), args.db, terminal_token, miniapp_token, admin_token, admin_username, admin_password)
     print("LiteShop Cloud API: http://{}:{}".format(args.host, args.port), flush=True)
     try:
         server.serve_forever()

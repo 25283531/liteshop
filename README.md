@@ -41,13 +41,15 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 
 ### Docker 配置清单
 
-运行容器前必须设置以下两个环境变量。它们是接口鉴权令牌，应使用两个不同的随机值（建议至少 32 字节），不要提交到 Git 或写入镜像：
+运行容器前必须设置以下接口鉴权和管理员登录环境变量。令牌应使用不同的随机值，应使用两个不同的随机值（建议至少 32 字节），不要提交到 Git 或写入镜像：
 
 | 环境变量 | 是否必填 | 用途 |
 | --- | --- | --- |
 | `LITESHOP_TERMINAL_TOKEN` | 是 | 安卓机顶盒上传同步事件时使用的 Bearer 令牌 |
 | `LITESHOP_MINIAPP_TOKEN` | 是 | 云端内部读取接口使用的令牌；不要放入微信小程序前端 |
-| `LITESHOP_ADMIN_TOKEN` | 是 | 云端 Web 管理台和管理 API 使用的令牌；不要与前两个令牌复用 |
+| `LITESHOP_ADMIN_TOKEN` | 是 | 管理 API 第二步令牌；不要与前两个令牌复用 |
+| `LITESHOP_ADMIN_USERNAME` | 否 | 管理员第一步登录账户名，默认 `admin` |
+| `LITESHOP_ADMIN_PASSWORD` | 是 | 管理员第一步登录密码；一键脚本自动生成 |
 
 Compose 会将容器的 `8787` 端口发布到服务器的 `8787` 端口：
 
@@ -161,4 +163,4 @@ Android 终端是独立客户端，数据保存在机顶盒 SQLite。云端地�
 
 可申请小程序通知、查询、预约、公众号通知和公众号群发。公众号群发任务按店铺创建，只统计并发送到该店铺的关注者；运营者仍需配置公众号凭据并审核后执行实际发送。共用的小程序/公众号必须在服务端通过会员与店铺关系进行隔离，会员只能看到自己注册过会员的店铺。
 
-邮箱注册、SMTP、小程序和公众号配置均在根路径管理台的“云端设置”页面中完成。配置值保存在云端 SQLite 数据库，不需要写入 Docker 环境变量；密码、AppSecret 和 Token 只显示配置状态，不会回显。`LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` 和 `LITESHOP_ADMIN_TOKEN` 仍仅用于接口鉴权。
+邮箱注册、SMTP、小程序和公众号配置均在管理台的“云端设置”页面中完成。配置值保存在云端 SQLite 数据库，不需要写入 Docker 环境变量；密码、AppSecret 和 Token 只显示配置状态，不会回显。根路径是公共注册/登录入口，管理员先输入 `LITESHOP_ADMIN_USERNAME` / `LITESHOP_ADMIN_PASSWORD`，再输入 `LITESHOP_ADMIN_TOKEN` 进入 `/admin` 管理台。

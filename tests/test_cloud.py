@@ -230,6 +230,15 @@ class CloudTests(unittest.TestCase):
         self.assertTrue(response["data"]["settings"]["wechat_token_configured"])
         self.assertNotIn("mini-secret", json.dumps(response))
 
+    def test_admin_account_login_is_separate_from_token(self):
+        status, response = self.request("POST", "/api/v1/admin/login", {"username": "root", "password": "bad"}, auth=False)
+        self.assertEqual(status, 401, response)
+        self.server.admin_username = "root"
+        self.server.admin_password = "good-password"
+        status, response = self.request("POST", "/api/v1/admin/login", {"username": "root", "password": "good-password"}, auth=False)
+        self.assertEqual(status, 200, response)
+        self.assertTrue(response["data"]["requires_token"])
+
 
 if __name__ == "__main__":
     unittest.main()
