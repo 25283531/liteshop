@@ -4,7 +4,7 @@
 <body>
 <div class="topbar"><div class="brand"><svg viewBox="0 0 40 40" width="32" height="32" aria-hidden="true"><rect x="8" y="13" width="24" height="24" rx="4" fill="#087d74"/><path d="M14 13 C14 8, 17 5, 20 5 C23 5, 26 8, 26 13" stroke="#087d74" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M16 20 L16 30 L24 30" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg><span>LiteShop</span></div><div class="status-bar"><span id="cloud-connection" class="status-item"><span class="dot dot-gray"></span>云端服务未配置</span><span id="connection" class="status-item">正在打开本地账本…</span><button id="cloud-login" class="secondary">登录/注册云端</button><button id="settings" class="secondary">设置</button><button id="reconnect" class="quiet">重新连接</button></div></div>
 <main>
-<div class="heading"><h1 id="shop-name">每一笔生意，清楚记录。</h1><p id="terminal-info">本地记账 · 数据保存在机顶盒</p></div>
+<div class="heading"><h1 id="shop-name">会员管理工作台</h1><p id="terminal-info">本地账本 · 会员、储值、积分和交易一目了然</p></div>
 <div id="message" role="status" aria-live="polite"></div>
 <section id="login" class="panel" hidden><h2>开发浏览器连接</h2><p>输入测试服务启动时显示的访问密钥；机顶盒 APK 无需此配置。</p><form id="login-form"><label for="token">访问密钥</label><input id="token" type="password" autocomplete="off" required><button type="submit">连接工作台</button></form></section>
 <div id="pending" class="panel warning" hidden><strong>有一笔操作等待确认</strong><p id="pending-description"></p><p>连接可能在提交后中断。请重试原请求，系统会核对结果，避免重复记账。</p><button id="retry">重试原请求</button></div>

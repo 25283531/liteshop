@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.Gravity;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -53,12 +54,21 @@ public class MainActivity extends Activity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(8, 4, 8, 4);
+        bar.setBackgroundColor(android.graphics.Color.rgb(245, 247, 248));
+        bar.setMinimumHeight(56);
         status = new TextView(this);
         status.setText("LiteShop · 正在启动本地账本");
-        status.setPadding(16, 8, 8, 8);
+        status.setSingleLine(true);
+        status.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        status.setTextSize(14);
+        status.setTextColor(android.graphics.Color.rgb(35, 70, 76));
+        status.setPadding(8, 4, 10, 4);
         bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         Button data = new Button(this);
-        data.setText("数据位置");
+        data.setText("数据");
+        compactButton(data);
         data.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 new AlertDialog.Builder(MainActivity.this).setTitle("机顶盒本地数据")
@@ -70,32 +80,51 @@ public class MainActivity extends Activity {
         });
         bar.addView(data);
         Button serial = new Button(this);
-        serial.setText("终端序列号");
+        serial.setText("序列号");
+        compactButton(serial);
         serial.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showTerminalSerial(); }
         });
         bar.addView(serial);
         Button cloud = new Button(this);
-        cloud.setText("云端同步");
+        cloud.setText("同步");
+        compactButton(cloud);
         cloud.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { configureCloud(); }
         });
         bar.addView(cloud);
         Button broadcast = new Button(this);
-        broadcast.setText("公众号群发");
+        broadcast.setText("群发");
+        compactButton(broadcast);
         broadcast.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showBroadcastInfo(); }
         });
         bar.addView(broadcast);
+        Button members = new Button(this);
+        members.setText("会员");
+        compactButton(members);
+        members.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { focusMembers(); }
+        });
+        bar.addView(members);
+        Button settingsButton = new Button(this);
+        settingsButton.setText("设置");
+        compactButton(settingsButton);
+        settingsButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { focusSettings(); }
+        });
+        bar.addView(settingsButton);
         Button reload = new Button(this);
-        reload.setText("重载页面");
+        reload.setText("重载");
+        compactButton(reload);
         reload.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { loadHome(); }
         });
         bar.addView(reload);
-        layout.addView(bar);
         web = new WebView(this);
         layout.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
+        // Keep the native controls at the bottom so the member workspace remains the visual focus.
+        layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         setContentView(layout);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -136,6 +165,25 @@ public class MainActivity extends Activity {
         syncWorker.scheduleWithFixedDelay(new Runnable() {
             @Override public void run() { uploadCloud(); }
         }, 0, 30, TimeUnit.SECONDS);
+    }
+
+    private void compactButton(Button button) {
+        button.setTextSize(14);
+        button.setMinHeight(44);
+        button.setPadding(12, 0, 12, 0);
+        button.setSingleLine(true);
+    }
+
+    private void focusMembers() {
+        if (web != null) {
+            web.evaluateJavascript("(function(){var e=document.getElementById('search');if(e){e.focus();e.scrollIntoView(true);}})();", null);
+        }
+    }
+
+    private void focusSettings() {
+        if (web != null) {
+            web.evaluateJavascript("(function(){var e=document.getElementById('settings');if(e){e.click();}})();", null);
+        }
     }
 
     private void showTerminalSerial() {
