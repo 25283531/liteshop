@@ -30,7 +30,7 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 - 数据库位于应用私有目录的 `databases/liteshop.db`，关闭应用、重启机顶盒后保留；卸载应用或清除应用数据会删除账本。
 - 键鼠及 HID 扫码枪走 Android 标准输入，F2 定位会员搜索框。
 - Cloud API 已实现批量事件幂等接收、顺序校验、会员/卡/积分投影和内部只读查询；终端配置后每 30 秒后台上传，失败保留事件重试。
-- 云端下载、备份恢复、USB 打印驱动及打印队列、自启/Kiosk、微信登录及小程序客户端尚未实现。备份和打印 Bridge 明确返回 `NOT_IMPLEMENTED`。
+- 云端下载、备份恢复、USB 打印驱动及打印队列、自启/Kiosk、微信小程序客户端尚未实现。云端邮箱账户、终端绑定和按店铺隔离查询已提供；备份和打印 Bridge 明确返回 `NOT_IMPLEMENTED`。
 - Android 实机与外设验收仍待完成，构建和自动化测试说明见下文。
 
 详细进度见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
@@ -93,11 +93,12 @@ docker compose -f apps/cloud/docker-compose.yml up -d --build
 curl http://127.0.0.1:8787/healthz
 ```
 
-部署完成后访问 `http://服务器地址:8787/` 打开云端管理台，输入 `LITESHOP_ADMIN_TOKEN` 管理令牌即可查看门店、终端、会员、会员卡、同步事件统计并修改管理台显示设置；`/healthz` 仍返回 JSON 健康状态。请保存三个令牌用于后续重启；终端顶部「云端同步」填写服务地址和终端令牌。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。目前共享令牌只适用于受控联调，微信正式登录和按设备授权尚待实现，小程序端不得持有内部读取令牌。
+部署完成后访问 `http://服务器地址:8787/` 打开云端管理台，输入 `LITESHOP_ADMIN_TOKEN` 管理令牌即可查看门店、终端、会员、会员卡、同步事件统计并修改管理台显示设置；`/healthz` 仍返回 JSON 健康状态。请保存三个令牌用于后续重启；终端顶部「云端同步」填写服务地址和终端令牌。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。终端同步令牌只用于受控终端上传；普通用户使用邮箱账户和终端序列号绑定，微信小程序仍不得持有内部读取令牌。
 
 - [Validate 工作流](https://github.com/25283531/liteshop/actions/workflows/ci.yml)：Python、浏览器、APK 构建、lint、API 19/28 模拟器测试；下载产物 `liteshop-terminal-debug` 获取 APK。
 - [Cloud API 验证工作流](https://github.com/25283531/liteshop/actions/workflows/cloud.yml)：云端测试、Compose 校验及容器健康检查。
 - [手动构建 Cloud API 镜像](https://github.com/25283531/liteshop/actions/workflows/cloud-image.yml)：在 Actions 页面点击 **Run workflow** 手动构建镜像，可选发布到 GitHub Container Registry（GHCR）。
+- [手动构建安卓 APK](https://github.com/25283531/liteshop/actions/workflows/android-build.yml)：在 Actions 页面点击 **Run workflow**，下载 `liteshop-terminal-debug` 构建产物。
 
 ## 机顶盒安装与使用
 
@@ -153,3 +154,20 @@ Android 终端是独立客户端，数据保存在机顶盒 SQLite。云端地�
 个人、教育、评估和非商业内部使用免费。商用部署、销售、托管、集成付费产品或以本项目产生收入，必须先取得版权方书面商业授权。完整条款见 [LICENSE](LICENSE)。第三方代码保留原有许可证。
 
 远程仓库：<https://github.com/25283531/liteshop>
+
+## 云端账户、终端绑定与微信增值服务
+
+部署完成后打开 `http://服务器地址:8787/account`，使用邮箱注册或登录。注册成功后会通过 SMTP 发送包含注册用户名的确认邮件；登录后输入机顶盒“终端序列号”页面显示的 16 位大写字母数字序列号，即可绑定终端并查看该用户已绑定店铺的会员数据。云端查询始终按用户绑定关系过滤，用户不能读取其他店铺。
+
+可申请小程序通知、查询、预约、公众号通知和公众号群发。公众号群发任务按店铺创建，只统计并发送到该店铺的关注者；运营者仍需配置公众号凭据并审核后执行实际发送。共用的小程序/公众号必须在服务端通过会员与店铺关系进行隔离，会员只能看到自己注册过会员的店铺。
+
+邮箱注册需要配置以下 Docker 环境变量（未配置时注册会返回邮件发送失败）：
+
+| 变量 | 示例 | 说明 |
+| --- | --- | --- |
+| `LITESHOP_SMTP_HOST` | `smtp.example.com` | SMTP 服务器 |
+| `LITESHOP_SMTP_PORT` | `587` | SMTP 端口，默认 587 |
+| `LITESHOP_SMTP_USERNAME` | `noreply@example.com` | SMTP 用户名 |
+| `LITESHOP_SMTP_PASSWORD` | `授权码` | SMTP 密码或授权码 |
+| `LITESHOP_SMTP_FROM` | `noreply@example.com` | 邮件发件人 |
+| `LITESHOP_SMTP_SSL` | `0` 或 `1` | `1` 使用 SSL 直连，`0` 使用 STARTTLS |

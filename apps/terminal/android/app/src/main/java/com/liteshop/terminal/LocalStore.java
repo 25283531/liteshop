@@ -14,6 +14,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URLDecoder;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -25,6 +26,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     private static final long MAX_BALANCE = 9000000000000L;
     private final Context context;
     private volatile String cloudState = "NOT_CONFIGURED";
+    private static final char[] SERIAL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toCharArray();
     void setCloudState(String value) { cloudState = value; }
 
     public static final class Response {
@@ -41,7 +43,7 @@ public final class LocalStore extends SQLiteOpenHelper {
     public LocalStore(Context context) { this(context, "liteshop.db"); }
     // Package-private database name allows isolated instrumentation tests.
     LocalStore(Context context, String name) {
-        super(context, name, null, 2);
+        super(context, name, null, 3);
         this.context = context.getApplicationContext();
     }
 
@@ -79,10 +81,11 @@ public final class LocalStore extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE card_type ADD COLUMN points_rate INTEGER NOT NULL DEFAULT 0");
             db.execSQL("ALTER TABLE card_type ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_member_inviter ON member(inviter_member_id)");
+            db.execSQL("ALTER TABLE device ADD COLUMN serial_no TEXT");
             long stamp = System.currentTimeMillis();
             String shop = uid(), device = uid(), owner = uid();
             insert(db, "shop", object("id", shop, "name", "我的门店", "created_at", stamp));
-            insert(db, "device", object("id", device, "shop_id", shop, "name", "安卓机顶盒", "created_at", stamp));
+            insert(db, "device", object("id", device, "shop_id", shop, "name", "安卓机顶盒", "serial_no", newSerial(), "created_at", stamp));
             insert(db, "staff", object("id", owner, "shop_id", shop, "name", "店主", "role", "OWNER", "created_at", stamp));
             insert(db, "sync_state", object("device_id", device, "updated_at", stamp));
             JSONObject ctx = object("shop_id", shop, "device_id", device, "operator_id", owner);
@@ -132,6 +135,18 @@ public final class LocalStore extends SQLiteOpenHelper {
                 }
             } finally { shops.close(); }
         }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE device ADD COLUMN serial_no TEXT");
+            Cursor devices = db.rawQuery("SELECT id FROM device WHERE serial_no IS NULL", null);
+            try { while (devices.moveToNext()) { ContentValues values = new ContentValues(); values.put("serial_no", newSerial()); db.update("device", values, "id=?", new String[]{devices.getString(0)}); } }
+            finally { devices.close(); }
+        }
+    }
+
+    private static String newSerial() {
+        SecureRandom random = new SecureRandom(); StringBuilder value = new StringBuilder(16);
+        for (int i = 0; i < 16; i++) { value.append(SERIAL_ALPHABET[random.nextInt(SERIAL_ALPHABET.length)]); }
+        return value.toString();
     }
 
     public synchronized Response handle(String method, String path, String body) {
@@ -164,7 +179,13 @@ public final class LocalStore extends SQLiteOpenHelper {
 
     /** Returns a bounded outbox batch for the cloud sync worker. */
     public synchronized JSONArray pendingEvents(int limit) throws JSONException {
-        return rows(getReadableDatabase(), "SELECT sequence,id,shop_id,device_id,event_type,entity_id,payload,schema_version,created_at FROM sync_event WHERE status IN ('PENDING','FAILED') ORDER BY sequence LIMIT ?", String.valueOf(limit));
+        JSONArray result = rows(getReadableDatabase(), "SELECT sequence,id,shop_id,device_id,event_type,entity_id,payload,schema_version,created_at FROM sync_event WHERE status IN ('PENDING','FAILED') ORDER BY sequence LIMIT ?", String.valueOf(limit));
+        Cursor serialCursor = getReadableDatabase().rawQuery("SELECT serial_no FROM device LIMIT 1", null);
+        String serial = "";
+        try { if (serialCursor.moveToFirst() && !serialCursor.isNull(0)) { serial = serialCursor.getString(0); } }
+        finally { serialCursor.close(); }
+        for (int i = 0; i < result.length(); i++) { result.getJSONObject(i).put("serial_no", serial); }
+        return result;
     }
 
     public synchronized void markEventsSynced(JSONArray ids) throws JSONException {
@@ -190,7 +211,8 @@ public final class LocalStore extends SQLiteOpenHelper {
         if (path.equals("card-types")) { return rows(db, "SELECT * FROM card_type ORDER BY mode"); }
         if (path.equals("settings")) {
             JSONObject shop = require(db, "shop", context(db).getString("shop_id"));
-            return object("id", shop.getString("id"), "name", shop.getString("name"), "has_local_password", !shop.isNull("local_password_hash"));
+            JSONObject device = require(db, "device", context(db).getString("device_id"));
+            return object("id", shop.getString("id"), "name", shop.getString("name"), "has_local_password", !shop.isNull("local_password_hash"), "serial_no", device.getString("serial_no"));
         }
         if (path.equals("members") || path.startsWith("members?")) {
             String query = "", offset = "0";

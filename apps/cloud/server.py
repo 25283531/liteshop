@@ -1,12 +1,17 @@
 """Small standard-library Cloud API for Terminal outbox sync and mini-program reads."""
 import argparse
+import base64
 import hashlib
 import hmac
 import json
 import os
+import re
+import secrets
+import smtplib
 import sqlite3
 import time
 import threading
+from email.message import EmailMessage
 from urllib.parse import urlsplit, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,13 +42,36 @@ CREATE TABLE IF NOT EXISTS points_projection (
 );
 CREATE TABLE IF NOT EXISTS terminal_registry (
   device_id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'ACTIVE', last_seen INTEGER NOT NULL
+  serial_no TEXT UNIQUE, status TEXT NOT NULL DEFAULT 'ACTIVE', last_seen INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cloud_shop (
   shop_id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cloud_settings (
   key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cloud_user (
+  user_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE', created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_session (
+  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES cloud_user(user_id), expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_terminal (
+  user_id TEXT NOT NULL REFERENCES cloud_user(user_id), device_id TEXT NOT NULL REFERENCES terminal_registry(device_id),
+  shop_id TEXT NOT NULL, bound_at INTEGER NOT NULL, PRIMARY KEY(user_id, device_id)
+);
+CREATE TABLE IF NOT EXISTS service_subscription (
+  user_id TEXT NOT NULL REFERENCES cloud_user(user_id), shop_id TEXT NOT NULL, service_code TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'REQUESTED', requested_at INTEGER NOT NULL, PRIMARY KEY(user_id, shop_id, service_code)
+);
+CREATE TABLE IF NOT EXISTS message_campaign (
+  campaign_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES cloud_user(user_id), shop_id TEXT NOT NULL,
+  channel TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'QUEUED', created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS wechat_follower (
+  shop_id TEXT NOT NULL, openid TEXT NOT NULL, member_id TEXT,
+  followed_at INTEGER NOT NULL, PRIMARY KEY(shop_id, openid)
 );
 """
 
@@ -59,12 +87,63 @@ def fingerprint(value):
     return hashlib.sha256(encoded).hexdigest()
 
 
+def password_hash(password, salt=None):
+    salt = salt or secrets.token_bytes(16)
+    iterations = 210000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    return "pbkdf2_sha256${}${}${}".format(iterations, base64.urlsafe_b64encode(salt).decode(), digest.hex())
+
+
+def password_matches(password, encoded):
+    try:
+        algorithm, iterations, salt, digest = encoded.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), base64.urlsafe_b64decode(salt.encode()), int(iterations)).hex()
+        return hmac.compare_digest(actual, digest)
+    except (ValueError, TypeError):
+        return False
+
+
+class RegistrationMailer:
+    def __init__(self):
+        self.host = os.environ.get("LITESHOP_SMTP_HOST", "")
+        self.port = int(os.environ.get("LITESHOP_SMTP_PORT", "587"))
+        self.username = os.environ.get("LITESHOP_SMTP_USERNAME", "")
+        self.password = os.environ.get("LITESHOP_SMTP_PASSWORD", "")
+        self.sender = os.environ.get("LITESHOP_SMTP_FROM", self.username)
+        self.ssl = os.environ.get("LITESHOP_SMTP_SSL", "0") == "1"
+
+    def send_registration(self, email, username):
+        if not self.host or not self.sender:
+            raise RuntimeError("SMTP is not configured")
+        message = EmailMessage()
+        message["Subject"] = "LiteShop 注册成功"
+        message["From"] = self.sender
+        message["To"] = email
+        message.set_content("您好，{}：\n\n您的 LiteShop 云端账号已注册成功。\n注册用户名：{}\n\n请妥善保管账号信息。".format(username, username))
+        client = smtplib.SMTP_SSL(self.host, self.port, timeout=15) if self.ssl else smtplib.SMTP(self.host, self.port, timeout=15)
+        try:
+            if not self.ssl:
+                client.starttls()
+            if self.username:
+                client.login(self.username, self.password)
+            client.send_message(message)
+        finally:
+            client.quit()
+
+
 class CloudStore:
     def __init__(self, path):
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        try:
+            self.conn.execute("ALTER TABLE terminal_registry ADD COLUMN serial_no TEXT")
+        except sqlite3.OperationalError:
+            pass
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_serial ON terminal_registry(serial_no) WHERE serial_no IS NOT NULL")
         self.conn.commit()
 
     def close(self):
@@ -120,7 +199,14 @@ class CloudStore:
                     int(event.get("schema_version", 1)), str(event["event_type"]), str(event["entity_id"]),
                     json.dumps(body, ensure_ascii=False, sort_keys=True), digest, int(event["created_at"]), stamp()))
                 self._project(event)
-                self.conn.execute("INSERT INTO terminal_registry(device_id,shop_id,last_seen) VALUES (?,?,?) ON CONFLICT(device_id) DO UPDATE SET shop_id=excluded.shop_id,last_seen=excluded.last_seen", (event["device_id"], event["shop_id"], stamp()))
+                serial = event.get("serial_no")
+                if serial is not None and (not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial)):
+                    raise ValueError("invalid serial_no")
+                if serial is not None:
+                    serial_owner = self.conn.execute("SELECT device_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
+                    if serial_owner and serial_owner[0] != event["device_id"]:
+                        raise ValueError("serial_no belongs to another terminal")
+                self.conn.execute("INSERT INTO terminal_registry(device_id,shop_id,serial_no,last_seen) VALUES (?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET shop_id=excluded.shop_id,serial_no=COALESCE(excluded.serial_no,terminal_registry.serial_no),last_seen=excluded.last_seen", (event["device_id"], event["shop_id"], serial, stamp()))
                 accepted.append({"event_id": event_id, "status": "ACCEPTED"})
         return accepted
 
@@ -185,7 +271,7 @@ class CloudStore:
                 "terminals": self.conn.execute("SELECT COUNT(*) FROM terminal_registry").fetchone()[0],
                 "shops": self.conn.execute("SELECT COUNT(*) FROM cloud_shop").fetchone()[0],
             }
-            terminals = [dict(r) for r in self.conn.execute("SELECT device_id,shop_id,name,status,last_seen FROM terminal_registry ORDER BY last_seen DESC").fetchall()]
+            terminals = [dict(r) for r in self.conn.execute("SELECT device_id,shop_id,name,serial_no,status,last_seen FROM terminal_registry ORDER BY last_seen DESC").fetchall()]
             settings = {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
             return {"counts": counts, "shops": self.shops(), "terminals": terminals, "settings": settings}
 
@@ -201,6 +287,95 @@ class CloudStore:
                     raise ValueError("setting values must be strings of at most 200 characters")
                 self.conn.execute("INSERT INTO cloud_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (key, value, stamp()))
             return {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
+
+    def register_user(self, email, username, password):
+        email = email.strip().lower() if isinstance(email, str) else ""
+        username = username.strip() if isinstance(username, str) else ""
+        if not re.fullmatch(r"[^@\s]{1,100}@[^@\s]{1,100}\.[^@\s]{2,100}", email):
+            raise ValueError("请输入有效邮箱")
+        if not re.fullmatch(r"[\w\u4e00-\u9fff.-]{2,64}", username):
+            raise ValueError("用户名需为 2-64 位字母、数字、中文、下划线、点或短横线")
+        if not isinstance(password, str) or len(password) < 8 or len(password) > 128:
+            raise ValueError("密码长度需为 8-128 位")
+        user_id = secrets.token_hex(16)
+        with self.lock, self.conn:
+            try:
+                self.conn.execute("INSERT INTO cloud_user VALUES (?,?,?,?,?,?)", (user_id, email, username, password_hash(password), "ACTIVE", stamp()))
+            except sqlite3.IntegrityError:
+                raise ValueError("邮箱或用户名已经注册")
+        return {"user_id": user_id, "email": email, "username": username}
+
+    def login_user(self, email, password):
+        with self.lock, self.conn:
+            row = self.conn.execute("SELECT user_id,email,username,password_hash,status FROM cloud_user WHERE email=?", ((email or "").strip().lower(),)).fetchone()
+            if not row or row[4] != "ACTIVE" or not password_matches(password or "", row[3]):
+                raise ValueError("邮箱或密码错误")
+            raw = secrets.token_urlsafe(32)
+            self.conn.execute("INSERT INTO user_session VALUES (?,?,?)", (hashlib.sha256(raw.encode()).hexdigest(), row[0], stamp() + 30 * 24 * 3600 * 1000))
+            return {"token": raw, "user_id": row[0], "email": row[1], "username": row[2]}
+
+    def cancel_registration(self, user_id):
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM cloud_user WHERE user_id=?", (user_id,))
+
+    def session_user(self, raw_token):
+        if not isinstance(raw_token, str) or not raw_token:
+            return None
+        with self.lock:
+            row = self.conn.execute("SELECT u.user_id,u.email,u.username FROM user_session s JOIN cloud_user u ON u.user_id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.status='ACTIVE'", (hashlib.sha256(raw_token.encode()).hexdigest(), stamp())).fetchone()
+            return dict(row) if row else None
+
+    def bind_terminal(self, user_id, serial):
+        if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial.strip().upper()):
+            raise ValueError("请输入终端显示的 16 位序列号")
+        serial = serial.strip().upper()
+        with self.lock, self.conn:
+            row = self.conn.execute("SELECT device_id,shop_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
+            if not row:
+                raise ValueError("未找到该序列号对应的在线终端，请先让终端同步一次")
+            self.conn.execute("INSERT OR IGNORE INTO user_terminal VALUES (?,?,?,?)", (user_id, row[0], row[1], stamp()))
+            return {"device_id": row[0], "shop_id": row[1], "serial_no": serial}
+
+    def user_summary(self, user_id):
+        with self.lock:
+            shops = [dict(r) for r in self.conn.execute("SELECT s.shop_id,s.name,COUNT(DISTINCT m.member_id) AS member_count,COUNT(DISTINCT c.card_id) AS card_count,COALESCE((SELECT COUNT(*) FROM cloud_event e WHERE e.shop_id=s.shop_id AND e.event_type='CARD_TRANSACTION'),0) AS transaction_count FROM user_terminal ut JOIN cloud_shop s ON s.shop_id=ut.shop_id LEFT JOIN member_projection m ON m.shop_id=ut.shop_id LEFT JOIN card_projection c ON c.shop_id=ut.shop_id WHERE ut.user_id=? GROUP BY s.shop_id", (user_id,)).fetchall()]
+            terminals = [dict(r) for r in self.conn.execute("SELECT t.device_id,t.serial_no,t.shop_id,t.name,t.status,t.last_seen FROM user_terminal ut JOIN terminal_registry t ON t.device_id=ut.device_id WHERE ut.user_id=?", (user_id,)).fetchall()]
+            services = [dict(r) for r in self.conn.execute("SELECT shop_id,service_code,status,requested_at FROM service_subscription WHERE user_id=? ORDER BY requested_at DESC", (user_id,)).fetchall()]
+            return {"shops": shops, "terminals": terminals, "services": services}
+
+    def user_members(self, user_id, shop_id=None):
+        with self.lock:
+            if shop_id:
+                allowed = self.conn.execute("SELECT 1 FROM user_terminal WHERE user_id=? AND shop_id=? LIMIT 1", (user_id, shop_id)).fetchone()
+                if not allowed:
+                    raise ValueError("无权访问该店铺")
+                rows = self.conn.execute("SELECT member_id,shop_id,payload FROM member_projection WHERE shop_id=?", (shop_id,)).fetchall()
+            else:
+                rows = self.conn.execute("SELECT member_id,shop_id,payload FROM member_projection WHERE shop_id IN (SELECT shop_id FROM user_terminal WHERE user_id=?)", (user_id,)).fetchall()
+            return [dict(member_id=r[0], shop_id=r[1], **json.loads(r[2])) for r in rows]
+
+    def request_service(self, user_id, shop_id, service_code):
+        with self.lock, self.conn:
+            allowed = self.conn.execute("SELECT 1 FROM user_terminal WHERE user_id=? AND shop_id=? LIMIT 1", (user_id, shop_id)).fetchone()
+            if not allowed or service_code not in {"MINIAPP_NOTICE", "MINIAPP_QUERY", "MINIAPP_APPOINTMENT", "WECHAT_NOTICE", "WECHAT_BROADCAST"}:
+                raise ValueError("无权开通该服务或服务代码无效")
+            self.conn.execute("INSERT INTO service_subscription VALUES (?,?,?,?,?) ON CONFLICT(user_id,shop_id,service_code) DO UPDATE SET status='REQUESTED',requested_at=excluded.requested_at", (user_id, shop_id, service_code, "REQUESTED", stamp()))
+            return {"shop_id": shop_id, "service_code": service_code, "status": "REQUESTED"}
+
+    def create_campaign(self, user_id, shop_id, channel, content):
+        if channel not in {"WECHAT_BROADCAST", "WECHAT_NOTICE"}:
+            raise ValueError("仅支持公众号消息服务")
+        if not isinstance(content, str) or not content.strip() or len(content) > 2000:
+            raise ValueError("消息内容不能为空且不能超过 2000 字")
+        with self.lock, self.conn:
+            allowed = self.conn.execute("SELECT 1 FROM user_terminal WHERE user_id=? AND shop_id=?", (user_id, shop_id)).fetchone()
+            active = self.conn.execute("SELECT 1 FROM service_subscription WHERE user_id=? AND shop_id=? AND service_code=? AND status IN ('REQUESTED','ACTIVE')", (user_id, shop_id, channel)).fetchone()
+            if not allowed or not active:
+                raise ValueError("请先绑定门店并申请对应公众号服务")
+            campaign_id = secrets.token_hex(16)
+            self.conn.execute("INSERT INTO message_campaign VALUES (?,?,?,?,?,?,?)", (campaign_id, user_id, shop_id, channel, content.strip(), "QUEUED", stamp()))
+            follower_count = self.conn.execute("SELECT COUNT(*) FROM wechat_follower WHERE shop_id=?", (shop_id,)).fetchone()[0]
+            return {"campaign_id": campaign_id, "shop_id": shop_id, "channel": channel, "status": "QUEUED", "target_count": follower_count}
 
     def members(self, shop_id=None):
         with self.lock:
@@ -249,6 +424,17 @@ class Handler(BaseHTTPRequestHandler):
     def admin_auth(self):
         return self.auth("admin")
 
+    def user_auth(self):
+        header = self.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            self.respond(401, {"ok": False, "error": {"code": "UNAUTHORIZED", "message": "请先登录"}})
+            return None
+        user = self.server.store.session_user(header[7:].strip())
+        if not user:
+            self.respond(401, {"ok": False, "error": {"code": "UNAUTHORIZED", "message": "登录已失效"}})
+            return None
+        return user
+
     def body(self):
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > 1024 * 1024:
@@ -263,6 +449,14 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             self.serve_static("index.html", "text/html; charset=utf-8")
             return
+        if parsed.path == "/account":
+            self.serve_static("account.html", "text/html; charset=utf-8")
+            return
+        if parsed.path.startswith("/account/"):
+            asset = parsed.path.removeprefix("/account/")
+            if asset in ("app.js", "app.css"):
+                self.serve_static("account-" + asset, "text/javascript; charset=utf-8" if asset.endswith(".js") else "text/css; charset=utf-8")
+                return
         if parsed.path.startswith("/admin/"):
             asset = parsed.path.removeprefix("/admin/")
             if asset in ("app.js", "app.css"):
@@ -289,7 +483,6 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/cloud/members":
             if not self.auth("miniapp"):
                 return
-            from urllib.parse import parse_qs
             shop_id = parse_qs(parsed.query).get("shop_id", [None])[0]
             self.respond(200, {"ok": True, "data": self.server.store.members(shop_id)})
             return
@@ -298,10 +491,78 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.respond(200, {"ok": True, "data": self.server.store.admin_summary()})
             return
+        if parsed.path == "/api/v1/account":
+            user = self.user_auth()
+            if user:
+                self.respond(200, {"ok": True, "data": {"user": user, **self.server.store.user_summary(user["user_id"])}})
+            return
+        if parsed.path == "/api/v1/account/members":
+            user = self.user_auth()
+            if user:
+                shop_id = parse_qs(parsed.query).get("shop_id", [None])[0]
+                try:
+                    self.respond(200, {"ok": True, "data": self.server.store.user_members(user["user_id"], shop_id)})
+                except ValueError as exc:
+                    self.respond(403, {"ok": False, "error": {"code": "FORBIDDEN", "message": str(exc)}})
+            return
         self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "接口不存在"}})
 
     def do_POST(self):
-        if self.path != "/api/v1/terminal/sync/events":
+        path = urlsplit(self.path).path
+        if path == "/api/v1/auth/register":
+            try:
+                values = self.body()
+                result = self.server.store.register_user(values.get("email"), values.get("username"), values.get("password"))
+                try:
+                    self.server.mailer.send_registration(result["email"], result["username"])
+                except Exception:
+                    self.server.store.cancel_registration(result["user_id"])
+                    raise
+                self.respond(201, {"ok": True, "data": result, "message": "注册成功，注册用户名已发送到您的邮箱"})
+            except ValueError as exc:
+                self.respond(400, {"ok": False, "error": {"code": "INVALID_REGISTRATION", "message": str(exc)}})
+            except (RuntimeError, OSError, smtplib.SMTPException) as exc:
+                self.respond(503, {"ok": False, "error": {"code": "MAIL_DELIVERY_FAILED", "message": "账号已创建，但注册邮件发送失败，请联系管理员"}})
+            return
+        if path == "/api/v1/auth/login":
+            try:
+                values = self.body()
+                self.respond(200, {"ok": True, "data": self.server.store.login_user(values.get("email"), values.get("password"))})
+            except ValueError as exc:
+                self.respond(401, {"ok": False, "error": {"code": "INVALID_CREDENTIALS", "message": str(exc)}})
+            return
+        if path == "/api/v1/account/terminals":
+            user = self.user_auth()
+            if not user:
+                return
+            try:
+                result = self.server.store.bind_terminal(user["user_id"], self.body().get("serial_no"))
+                self.respond(201, {"ok": True, "data": result})
+            except ValueError as exc:
+                self.respond(400, {"ok": False, "error": {"code": "BIND_FAILED", "message": str(exc)}})
+            return
+        if path == "/api/v1/account/services":
+            user = self.user_auth()
+            if not user:
+                return
+            try:
+                values = self.body()
+                self.respond(201, {"ok": True, "data": self.server.store.request_service(user["user_id"], values.get("shop_id"), values.get("service_code"))})
+            except ValueError as exc:
+                self.respond(400, {"ok": False, "error": {"code": "SERVICE_REQUEST_FAILED", "message": str(exc)}})
+            return
+        if path == "/api/v1/account/message-campaigns":
+            user = self.user_auth()
+            if not user:
+                return
+            try:
+                values = self.body()
+                result = self.server.store.create_campaign(user["user_id"], values.get("shop_id"), values.get("channel"), values.get("content"))
+                self.respond(201, {"ok": True, "data": result})
+            except ValueError as exc:
+                self.respond(400, {"ok": False, "error": {"code": "CAMPAIGN_FAILED", "message": str(exc)}})
+            return
+        if path != "/api/v1/terminal/sync/events":
             self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "接口不存在"}})
             return
         if not self.auth("terminal"):
@@ -355,6 +616,7 @@ class CloudServer(ThreadingHTTPServer):
     daemon_threads = True
     def __init__(self, address, db, terminal_token, miniapp_token, admin_token=None):
         self.store = CloudStore(db)
+        self.mailer = RegistrationMailer()
         self.tokens = {"terminal": terminal_token, "miniapp": miniapp_token, "admin": admin_token or miniapp_token}
         super().__init__(address, Handler)
 

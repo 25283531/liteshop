@@ -69,12 +69,24 @@ public class MainActivity extends Activity {
             }
         });
         bar.addView(data);
+        Button serial = new Button(this);
+        serial.setText("终端序列号");
+        serial.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showTerminalSerial(); }
+        });
+        bar.addView(serial);
         Button cloud = new Button(this);
         cloud.setText("云端同步");
         cloud.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { configureCloud(); }
         });
         bar.addView(cloud);
+        Button broadcast = new Button(this);
+        broadcast.setText("公众号群发");
+        broadcast.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showBroadcastInfo(); }
+        });
+        bar.addView(broadcast);
         Button reload = new Button(this);
         reload.setText("重载页面");
         reload.setOnClickListener(new View.OnClickListener() {
@@ -124,6 +136,24 @@ public class MainActivity extends Activity {
         syncWorker.scheduleWithFixedDelay(new Runnable() {
             @Override public void run() { uploadCloud(); }
         }, 0, 30, TimeUnit.SECONDS);
+    }
+
+    private void showTerminalSerial() {
+        try {
+            JSONObject settings = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data");
+            new AlertDialog.Builder(this).setTitle("终端序列号").setMessage("请将以下 16 位序列号填写到云端账户页面进行绑定：\n\n" + settings.optString("serial_no", "未生成"))
+                .setPositiveButton("知道了", null).show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setTitle("终端序列号").setMessage("读取序列号失败，请重载应用").setPositiveButton("知道了", null).show();
+        }
+    }
+
+    private void showBroadcastInfo() {
+        boolean configured = !prefs.getString("cloud_token", "").isEmpty();
+        String message = configured
+            ? "终端已配置云端同步。公众号消息任务按店铺隔离，请在云端账户页面创建群发任务，运营者审核并配置公众号后发送。"
+            : "请先在“云端同步”中配置终端令牌，再使用云端账户页面创建公众号群发任务。";
+        new AlertDialog.Builder(this).setTitle("公众号群发").setMessage(message).setPositiveButton("知道了", null).show();
     }
 
     private void configureCloud() {
@@ -211,8 +241,12 @@ public class MainActivity extends Activity {
             try {
                 return new JSONObject().put("platform", "android").put("api", Build.VERSION.SDK_INT)
                     .put("androidVersion", Build.VERSION.RELEASE).put("model", Build.MODEL)
-                    .put("storage", "ANDROID_SQLITE").put("bridgeVersion", 2).toString();
+                    .put("storage", "ANDROID_SQLITE").put("serialNo", terminalSerial()).put("bridgeVersion", 3).toString();
             } catch (Exception e) { return "{}"; }
+        }
+        private String terminalSerial() {
+            try { return new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data").optString("serial_no", ""); }
+            catch (Exception ignored) { return ""; }
         }
         @JavascriptInterface public void reportReady(String payload) {
             if (payload == null || payload.length() > 512) { return; }

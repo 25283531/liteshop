@@ -47,7 +47,7 @@ docker compose -f apps/cloud/docker-compose.yml logs --tail=100
 curl http://127.0.0.1:8787/healthz
 ```
 
-当前服务默认绑定容器的所有接口，Compose 发布 8787 端口。仅在受控测试网络开放；远程连接应通过反向代理提供 HTTPS，Android 4.4 的 TLS/证书兼容性需实机验证。本骨架没有微信登录、设备注册和按租户授权，不应直接作为生产小程序后端。
+当前服务默认绑定容器的所有接口，Compose 发布 8787 端口。仅在受控测试网络开放；远程连接应通过反向代理提供 HTTPS，Android 4.4 的 TLS/证书兼容性需实机验证。微信 OAuth 和小程序客户端尚未接入；邮箱账户、终端序列号绑定及用户到店铺的数据隔离已实现。正式接入微信前仍应配置 HTTPS、运营者凭据和租户审计。
 
 ## 终端 A/B
 
@@ -88,3 +88,9 @@ curl http://127.0.0.1:8787/healthz
 `.github/workflows/cloud-image.yml` 只响应 Actions 页面中的 **Run workflow**，默认不发布镜像。将 `push_image` 设为 `true` 后，工作流使用 `GITHUB_TOKEN` 发布 `ghcr.io/25283531/liteshop-cloud-api:<git-sha>` 和 `latest` 标签。
 
 `.github/workflows/ci.yml` 构建调试 APK、lint、Android API 19/28 设备测试，以及本地业务和浏览器回归。APK artifact 为 `liteshop-terminal-debug`，正式签名和真机外设验收另行完成。
+
+## 账户接口与邮件配置
+
+账户页面为 `/account`。注册和登录接口分别为 `POST /api/v1/auth/register`、`POST /api/v1/auth/login`；登录后可使用 `GET /api/v1/account`、`POST /api/v1/account/terminals`、`GET /api/v1/account/members`、`POST /api/v1/account/services` 和 `POST /api/v1/account/message-campaigns`。终端绑定使用终端显示的 16 位序列号；会员和群发任务都按用户绑定的 `shop_id` 过滤。
+
+注册邮件需要设置 `LITESHOP_SMTP_HOST`、`LITESHOP_SMTP_PORT`、`LITESHOP_SMTP_USERNAME`、`LITESHOP_SMTP_PASSWORD`、`LITESHOP_SMTP_FROM` 和 `LITESHOP_SMTP_SSL`。只有邮件发送成功后才返回注册成功提示，邮件正文包含用户注册的用户名。

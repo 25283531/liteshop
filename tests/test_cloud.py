@@ -187,6 +187,32 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(self.server.store.member(a["entity_id"])["name"], "测试会员")
         self.assertEqual(self.server.store.member(b["entity_id"])["name"], "B 门店")
 
+    def test_user_registration_binding_and_shop_isolation(self):
+        sent = []
+        self.server.mailer.send_registration = lambda email, username: sent.append((email, username))
+        status, response = self.request("POST", "/api/v1/auth/register", {"email": "owner@example.com", "username": "owner", "password": "password123"}, auth=False)
+        self.assertEqual(status, 201, response)
+        self.assertEqual(sent, [("owner@example.com", "owner")])
+        status, response = self.request("POST", "/api/v1/auth/login", {"email": "owner@example.com", "password": "password123"}, auth=False)
+        self.assertEqual(status, 200, response)
+        user_token = response["data"]["token"]
+        serial = "ABCDEFGHIJKLMNOP"
+        event = self.event(payload={"shop_id": self.shop, "name": "一号店"})
+        event["event_type"] = "SHOP_INITIALIZED"
+        event["entity_id"] = self.shop
+        event["serial_no"] = serial
+        self.assertEqual(self.upload([event])[0], 200)
+        member_event = self.event(2, payload={"id": self.member, "name": "张三", "member_no": "M001"})
+        self.assertEqual(self.upload([member_event])[0], 200)
+        auth = {"Authorization": "Bearer " + user_token}
+        status, response = self.request("POST", "/api/v1/account/terminals", {"serial_no": serial}, auth=False, extra_headers=auth)
+        self.assertEqual(status, 201, response)
+        status, response = self.request("GET", "/api/v1/account/members", auth=False, extra_headers=auth)
+        self.assertEqual(status, 200, response)
+        self.assertEqual([m["member_id"] for m in response["data"]], [self.member])
+        status, response = self.request("GET", "/api/v1/account/members?shop_id=other", auth=False, extra_headers=auth)
+        self.assertEqual(status, 403, response)
+
 
 if __name__ == "__main__":
     unittest.main()

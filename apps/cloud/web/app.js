@@ -12,7 +12,7 @@
     login.hidden=true; dashboard.hidden=false; status.className=''; status.textContent='已连接';
     var c=data.counts||{}; document.getElementById('cards').innerHTML=[['shops','门店'],['terminals','终端'],['members','会员'],['cards','会员卡'],['events','同步事件']].map(function(x){return '<div class="card"><b>'+esc(c[x[0]]||0)+'</b><span>'+x[1]+'</span></div>';}).join('');
     document.getElementById('shops').innerHTML=table(['门店 ID','名称','会员数'],(data.shops||[]).map(function(s){return '<tr><td>'+esc(s.shop_id)+'</td><td>'+esc(s.name||'未命名')+'</td><td>'+esc(s.member_count)+'</td></tr>'; }));
-    document.getElementById('terminals').innerHTML=table(['设备 ID','门店','状态','最后同步'],(data.terminals||[]).map(function(t){return '<tr><td>'+esc(t.device_id)+'</td><td>'+esc(t.shop_id)+'</td><td>'+esc(t.status)+'</td><td>'+new Date(t.last_seen).toLocaleString()+'</td></tr>'; }));
+    document.getElementById('terminals').innerHTML=table(['设备 ID','序列号','门店','状态','最后同步'],(data.terminals||[]).map(function(t){return '<tr><td>'+esc(t.device_id)+'</td><td>'+esc(t.serial_no||'未上报')+'</td><td>'+esc(t.shop_id)+'</td><td>'+esc(t.status)+'</td><td>'+new Date(t.last_seen).toLocaleString()+'</td></tr>'; }));
     var s=data.settings||{}; document.getElementById('display-name').value=s.display_name||''; document.getElementById('notice').value=s.notice||'';
   }
   function load(){
