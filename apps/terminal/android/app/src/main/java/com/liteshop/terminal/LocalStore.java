@@ -84,7 +84,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE device ADD COLUMN serial_no TEXT");
             long stamp = System.currentTimeMillis();
             String shop = uid(), device = uid(), owner = uid();
-            insert(db, "shop", object("id", shop, "name", "我的门店", "created_at", stamp));
+            insert(db, "shop", object("id", shop, "name", "门店", "created_at", stamp));
             insert(db, "device", object("id", device, "shop_id", shop, "name", "安卓机顶盒", "serial_no", newSerial(), "created_at", stamp));
             insert(db, "staff", object("id", owner, "shop_id", shop, "name", "店主", "role", "OWNER", "created_at", stamp));
             insert(db, "sync_state", object("device_id", device, "updated_at", stamp));
@@ -369,7 +369,8 @@ public final class LocalStore extends SQLiteOpenHelper {
         if (!card.getString("status").equals("ACTIVE") || (!card.isNull("expire_at") && card.getLong("expire_at") <= stamp)) {
             reject("CARD_INACTIVE", "卡已停用、挂失或过期");
         }
-        boolean stored = require(db, "card_type", card.getString("card_type_id")).getString("mode").equals("STORED");
+        JSONObject cardType = require(db, "card_type", card.getString("card_type_id"));
+        boolean stored = cardType.getString("mode").equals("STORED");
         if ((stored && times != 0) || (!stored && amount != 0)) { reject("CARD_MODE_MISMATCH", "金额和次数与卡类型不匹配"); }
         long value = stored ? amount : times;
         boolean valid = stored ? oneOf(kind, "RECHARGE", "CONSUME", "GIFT", "ADJUST", "REFUND")
@@ -402,7 +403,28 @@ public final class LocalStore extends SQLiteOpenHelper {
         update(db, "member_card", id, object("balance", after, "remaining_times", remaining,
             "version", card.getLong("version") + 1, "updated_at", stamp));
         emit(db, ctx, "CARD_TRANSACTION", tx.getString("id"), tx);
+        long pointDelta = transactionPoints(cardType, kind, amount, times);
+        if (pointDelta != 0) {
+            JSONObject account = require(db, "points_account", card.getString("member_id"));
+            long pointBalance = account.getLong("balance") + pointDelta;
+            if (pointBalance < 0) { reject("INSUFFICIENT_POINTS", "退款会导致积分为负数"); }
+            JSONObject point = object("id", uid(), "member_id", card.getString("member_id"), "points", pointDelta,
+                "balance_before", account.getLong("balance"), "balance_after", pointBalance,
+                "operator_id", ctx.getString("operator_id"), "device_id", ctx.getString("device_id"),
+                "remark", pointDelta > 0 ? "消费自动积分" : "退款扣回积分", "created_at", stamp);
+            insert(db, "points_transaction", point);
+            update(db, "points_account", card.getString("member_id"), object("balance", pointBalance, "updated_at", stamp));
+            emit(db, ctx, "POINTS_CHANGED", point.getString("id"), point);
+        }
         return tx;
+    }
+
+    private static long transactionPoints(JSONObject cardType, String kind, long amount, long times) throws JSONException {
+        long rate = cardType.optLong("points_rate", 0);
+        if (rate <= 0) { return 0; }
+        if (kind.equals("REFUND")) { return -((amount != 0 ? amount * rate / 100 : times * rate)); }
+        if (!kind.equals("CONSUME") && !kind.equals("DEDUCT_TIMES")) { return 0; }
+        return amount != 0 ? Math.abs(amount) * rate / 100 : Math.abs(times) * rate;
     }
 
     private static void validateFields(String action, JSONObject input) {

@@ -330,8 +330,34 @@ class ShopService:
             self.repo.insert("ledger_transaction", transaction)
             self.repo.update("member_card", card_id, dict(balance=balance, remaining_times=remaining, version=card["version"]+1, updated_at=transaction["created_at"]))
             self.emit("CARD_TRANSACTION", transaction["id"], transaction)
+            points_delta = self._transaction_points(card_type, kind, amount, times, source_id)
+            if points_delta:
+                account = self.require("points_account", card["member_id"])
+                points_balance = account["balance"] + points_delta
+                if points_balance < 0:
+                    raise BusinessError("INSUFFICIENT_POINTS", "Refund would make points negative")
+                points_row = dict(id=uid(), member_id=card["member_id"], points=points_delta,
+                                  balance_before=account["balance"], balance_after=points_balance,
+                                  operator_id=self.ctx["operator_id"], device_id=self.ctx["device_id"],
+                                  remark=("消费自动积分" if points_delta > 0 else "退款扣回积分"), created_at=transaction["created_at"])
+                self.repo.insert("points_transaction", points_row)
+                self.repo.update("points_account", card["member_id"], dict(balance=points_balance, updated_at=transaction["created_at"]))
+                self.emit("POINTS_CHANGED", points_row["id"], points_row)
             return transaction
         return self.command(request_id, "TRANSACT", payload, execute)
+
+    @staticmethod
+    def _transaction_points(card_type, kind, amount, times, source_id):
+        rate = card_type.get("points_rate", 0) or 0
+        if rate <= 0:
+            return 0
+        if kind == "REFUND":
+            # The source transaction stores consumption as negative values.
+            # Refunds reverse only the quantity being returned.
+            return -((amount * rate) // 100 if amount else times * rate)
+        if kind not in ("CONSUME", "DEDUCT_TIMES"):
+            return 0
+        return (abs(amount) * rate) // 100 if amount else abs(times) * rate
 
     def change_points(self, request_id, member_id, points, remark, password=None):
         def execute():

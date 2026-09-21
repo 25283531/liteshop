@@ -59,7 +59,7 @@
             el("login").hidden = true;
             el("shop-name").textContent = data.shop.name;
             el("member-count").textContent = data.member_count;
-            el("event-count").textContent = data.pending_events;
+            el("event-count").textContent = data.pending_events; if (bridge) { try { var info = JSON.parse(bridge.getTerminalInfo()); el("terminal-info").textContent = "Android " + info.androidVersion + " · " + info.model + " · 序列号 " + (info.serialNo || "未知") + " · " + info.storage + " · " + (info.databasePath || "本机应用私有目录"); } catch (ignored) {} }
             var syncNames = {NOT_CONFIGURED: "未配置", SYNCING: "同步中", OFFLINE: "离线待同步", PENDING: "待同步", SYNCED: "已同步"};
             el("cloud-sync").textContent = syncNames[data.cloud_sync] || "状态未知";
             var cloudStates = {NOT_CONFIGURED: {text: "云端服务未配置", cls: "dot-gray"}, SYNCING: {text: "云端服务已连接", cls: "dot-ok"}, OFFLINE: {text: "云端服务未连接", cls: "dot-error"}, PENDING: {text: "云端服务已连接", cls: "dot-ok"}, SYNCED: {text: "云端服务已连接", cls: "dot-ok"}};
@@ -131,6 +131,10 @@
         state.form = {action: action, member: m, card: card, tx: tx};
         state.opener = document.activeElement;
         el("fields").innerHTML = fields; el("form-title").textContent = title;
+        if (action === "refund" && tx) {
+            el("f-quantity").setAttribute("max", String(Math.abs(card.mode === "STORED" ? tx.amount : tx.times)));
+            el("f-quantity").setAttribute("placeholder", "最多可退 " + Math.abs(card.mode === "STORED" ? tx.amount : tx.times) + (card.mode === "STORED" ? " 分" : " 次"));
+        }
         el("form-context").textContent = action === "new" ? "保存后可为会员开卡。" : m.name + " · " + (m.phone || "未留手机号");
         el("form-error").textContent = ""; el("modal").hidden = false;
         var first = el("fields").querySelector("input,select");
@@ -160,7 +164,7 @@
                 try { var saved = JSON.parse(localStorage.getItem("liteshop.pending") || "null"); if (saved && saved.payload.request_id === p.payload.request_id) { localStorage.removeItem("liteshop.pending"); } } catch (e) {}
             }
             pendingUI();
-            if (error) { notice(error + (uncertain ? "；请重试原请求" : ""), true); return; }
+            if (error) { el("form-error").textContent = error + (uncertain ? "；请重试原请求" : "，请修改后再试"); el("modal").hidden = false; return; }
             closeForm(); notice("已保存，账本记录已更新。", false);
             status(); search();
             if (p.action === "create-member") { loadMember(result.id); }
@@ -181,13 +185,13 @@
             else if (a === "open") { command = "open-card"; p = {member_id: f.member.id, card_type_id: value("type")}; }
             else if (a === "points") { command = "points"; p = {member_id: f.member.id, points: quantity(false, true), remark: value("remark"), password: value("password")}; }
             else if (a === "card-status") { command = "card-status"; p = {card_id: f.card.id, version: f.card.version, status: value("status")}; }
-            else { command = "transact"; p = {card_id: f.card.id, kind: a === "refund" ? "REFUND" : a, remark: value("remark")}; p[f.card.mode === "STORED" ? "amount" : "times"] = quantity(f.card.mode === "STORED", false); if (a === "refund") { p.source_id = f.tx.id; } if (a === "RECHARGE" || a === "CREDIT_TIMES") { p.password = value("password"); } }
+            else { command = "transact"; p = {card_id: f.card.id, kind: a === "refund" ? "REFUND" : a, remark: value("remark")}; p[f.card.mode === "STORED" ? "amount" : "times"] = quantity(f.card.mode === "STORED", false); if (a === "refund") { var refundLimit = Math.abs(f.card.mode === "STORED" ? f.tx.amount : f.tx.times); if (p[f.card.mode === "STORED" ? "amount" : "times"] > refundLimit) { throw new Error("退款不能超过原订单可退数量（" + refundLimit + (f.card.mode === "STORED" ? " 分" : " 次") + "）"); } p.source_id = f.tx.id; } if (a === "RECHARGE" || a === "CREDIT_TIMES") { p.password = value("password"); } }
             p.request_id = "web-" + new Date().getTime() + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
             var pending = {action: command, payload: p, memberId: f.member ? f.member.id : null, description: el("form-title").textContent + " · " + el("form-context").textContent};
             if (localStorage.getItem("liteshop.pending")) { throw new Error("已有待确认请求，请刷新页面后处理"); }
             localStorage.setItem("liteshop.pending", JSON.stringify(pending));
             state.pending = pending; el("modal").hidden = true; submitPending();
-        } catch (error) { el("form-error").textContent = error.message || "浏览器无法保存重试信息，请开启本地存储"; }
+        } catch (error) { el("form-error").textContent = error.message || "浏览器无法保存重试信息，请开启本地存储"; el("modal").hidden = false; }
     };
     el("detail").onclick = function (event) { var t = event.target; if (t.getAttribute("data-action")) { openForm(t.getAttribute("data-action"), t.getAttribute("data-id")); } };
     el("member-list").onclick = function (event) { var t = event.target; while (t && t !== this) { if (t.getAttribute("data-member")) { loadMember(t.getAttribute("data-member")); return; } t = t.parentNode; } };
@@ -262,7 +266,15 @@
     };
     try {
         state.pending = JSON.parse(localStorage.getItem("liteshop.pending") || "null");
-        if (bridge) { var info = JSON.parse(bridge.getTerminalInfo()); el("terminal-info").textContent = "Android " + info.androidVersion + " · " + info.model + " · 机顶盒本地账本"; bridge.reportReady('{"version":"0.3.0"}'); }
+        if (bridge) {
+            var info = JSON.parse(bridge.getTerminalInfo());
+            el("terminal-info").textContent = "Android " + (info.androidVersion || "未知") +
+                " · " + (info.model || "未知设备") +
+                " · 序列号 " + (info.serialNo || "未知") +
+                " · " + (info.storage || "ANDROID_SQLITE") +
+                " · " + (info.databasePath || "本机应用私有目录");
+            bridge.reportReady('{"version":"0.3.0"}');
+        }
     } catch (error) { notice("终端状态读取失败，请重新连接", true); }
     pendingUI(); connect(); window.setInterval(status, 30000);
 }());

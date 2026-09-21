@@ -68,71 +68,10 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(8, 4, 8, 4);
-        bar.setBackgroundColor(android.graphics.Color.rgb(245, 247, 248));
-        bar.setMinimumHeight(56);
         status = new TextView(this);
-        status.setText("LiteShop · 正在启动本地账本");
-        status.setSingleLine(true);
-        status.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        status.setTextSize(14);
-        status.setTextColor(android.graphics.Color.rgb(35, 70, 76));
-        status.setPadding(8, 4, 10, 4);
-        bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-        Button data = new Button(this);
-        data.setText("数据");
-        compactButton(data);
-        data.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                new AlertDialog.Builder(MainActivity.this).setTitle("机顶盒本地数据")
-                    .setMessage("会员、余额、积分及流水保存在本机应用私有目录：\n"
-                        + getDatabasePath("liteshop.db").getAbsolutePath()
-                        + "\n\n断网可营业。云端绑定和数据汇总由 liteshop.250886.xyz 管理；云端投影不能替代本机备份。卸载应用或清除应用数据会删除本地账本。")
-                    .setPositiveButton("知道了", null).show();
-            }
-        });
-        bar.addView(data);
-        Button serial = new Button(this);
-        serial.setText("序列号");
-        compactButton(serial);
-        serial.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showTerminalSerial(); }
-        });
-        bar.addView(serial);
-        Button broadcast = new Button(this);
-        broadcast.setText("群发");
-        compactButton(broadcast);
-        broadcast.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showBroadcastInfo(); }
-        });
-        bar.addView(broadcast);
-        Button members = new Button(this);
-        members.setText("会员");
-        compactButton(members);
-        members.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { focusMembers(); }
-        });
-        bar.addView(members);
-        Button settingsButton = new Button(this);
-        settingsButton.setText("设置");
-        compactButton(settingsButton);
-        settingsButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { focusSettings(); }
-        });
-        bar.addView(settingsButton);
-        Button reload = new Button(this);
-        reload.setText("重载");
-        compactButton(reload);
-        reload.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { loadHome(); }
-        });
-        bar.addView(reload);
+        status.setText("正在启动本地账本");
         web = new WebView(this);
         layout.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
-        // Keep the native controls at the bottom so the member workspace remains the visual focus.
-        layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         root.addView(layout, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
         WebSettings settings = web.getSettings();
@@ -363,7 +302,8 @@ public class MainActivity extends Activity {
             try {
                 return new JSONObject().put("platform", "android").put("api", Build.VERSION.SDK_INT)
                     .put("androidVersion", Build.VERSION.RELEASE).put("model", Build.MODEL)
-                    .put("storage", "ANDROID_SQLITE").put("serialNo", terminalSerial()).put("bridgeVersion", 3).toString();
+                    .put("storage", "ANDROID_SQLITE").put("databasePath", getDatabasePath("liteshop.db").getAbsolutePath())
+                    .put("serialNo", terminalSerial()).put("bridgeVersion", 3).toString();
             } catch (Exception e) { return "{}"; }
         }
         private String terminalSerial() {

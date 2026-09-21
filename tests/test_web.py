@@ -127,6 +127,15 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(response["error"]["code"], "REFUND_EXCEEDED")
 
+    def test_consumption_points_follow_card_multiplier_and_refund_reverses(self):
+        self.command("update-settings", settings={"card_types": [{"category_code": "COUNT", "name": "计次会员", "mode": "COUNT", "enabled": True, "points_rate": 2}]})
+        member, card = self.member_card("COUNT")
+        self.command("transact", card_id=card["id"], kind="CREDIT_TIMES", times=5)
+        tx = self.command("transact", card_id=card["id"], kind="DEDUCT_TIMES", times=3)
+        self.assertEqual(self.get("members/" + member["id"])["points"]["balance"], 6)
+        self.command("transact", card_id=card["id"], kind="REFUND", times=1, source_id=tx["id"])
+        self.assertEqual(self.get("members/" + member["id"])["points"]["balance"], 4)
+
     def test_protected_operations_require_local_password_when_configured(self):
         self.command("update-settings", local_password="1234")
         member, card = self.member_card("COUNT")
