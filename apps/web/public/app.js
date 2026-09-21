@@ -220,6 +220,11 @@
         api("GET", "settings", null, function (error, data) {
             if (error) { notice(error, true); return; }
             el("shop-setting-name").value = data.name || "";
+            var account = {bound: false, username: ""};
+            try { if (bridge && bridge.getCloudAccountInfo) { account = JSON.parse(bridge.getCloudAccountInfo()); } } catch (ignored) {}
+            el("cloud-account-status").textContent = account.bound && account.username
+                ? "当前绑定云端账户：" + account.username
+                : "当前设备尚未绑定云端服务，可以访问 liteshop.250886.xyz 进行注册/登录，并在云端绑定当前设备";
             api("GET", "card-types", null, function (cardError, cards) {
             if (!cardError) { el("card-type-settings").innerHTML = cards.map(cardTypeField).join(""); }
                 var saver = (data.settings && data.settings.screensaver) || {};
@@ -245,7 +250,7 @@
             el("settings-modal").hidden = true; el("local-setting-password").value = ""; notice("设置已保存", false); connect();
         });
     };
-    el("cloud-login").onclick = function () { window.open("https://liteshop.250886.xyz", "_blank"); };
+    el("cloud-login").onclick = function () { if (bridge && bridge.showCloudLogin) { bridge.showCloudLogin(); } else { window.open("https://liteshop.250886.xyz", "_blank"); } };
     document.onkeydown = function (e) {
         if (el("modal").hidden) { if (e.keyCode === 113) { el("search").focus(); el("search").select(); e.preventDefault(); } return; }
         if (e.keyCode === 27) { closeForm(); }

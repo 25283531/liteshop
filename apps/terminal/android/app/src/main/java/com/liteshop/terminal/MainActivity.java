@@ -23,6 +23,10 @@ import android.widget.FrameLayout;
 import android.os.Handler;
 import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -85,7 +89,7 @@ public class MainActivity extends Activity {
                 new AlertDialog.Builder(MainActivity.this).setTitle("机顶盒本地数据")
                     .setMessage("会员、余额、积分及流水保存在本机应用私有目录：\n"
                         + getDatabasePath("liteshop.db").getAbsolutePath()
-                        + "\n\n断网可营业。可在云端同步中配置事件上传；云端投影不能替代本机备份。卸载应用或清除应用数据会删除本地账本。")
+                        + "\n\n断网可营业。云端绑定和数据汇总由 liteshop.250886.xyz 管理；云端投影不能替代本机备份。卸载应用或清除应用数据会删除本地账本。")
                     .setPositiveButton("知道了", null).show();
             }
         });
@@ -97,13 +101,6 @@ public class MainActivity extends Activity {
             @Override public void onClick(View v) { showTerminalSerial(); }
         });
         bar.addView(serial);
-        Button cloud = new Button(this);
-        cloud.setText("同步");
-        compactButton(cloud);
-        cloud.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { configureCloud(); }
-        });
-        bar.addView(cloud);
         Button broadcast = new Button(this);
         broadcast.setText("群发");
         compactButton(broadcast);
@@ -177,7 +174,7 @@ public class MainActivity extends Activity {
         lastActivityAt = System.currentTimeMillis();
         idleHandler.postDelayed(idleCheck, 10000);
         syncWorker.scheduleWithFixedDelay(new Runnable() {
-            @Override public void run() { uploadCloud(); }
+            @Override public void run() { uploadCloud(); refreshCloudAccount(); }
         }, 0, 30, TimeUnit.SECONDS);
     }
 
@@ -263,6 +260,30 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showCloudLogin() {
+        String serial = "未生成";
+        try { serial = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data").optString("serial_no", serial); }
+        catch (Exception ignored) { }
+        new AlertDialog.Builder(this).setTitle("登录/注册云端")
+            .setMessage("请访问 liteshop.250886.xyz 进行注册/登录，并在云端绑定当前设备。\n\n当前设备的序列号：" + serial)
+            .setPositiveButton("知道了", null).show();
+    }
+
+    private void refreshCloudAccount() {
+        try {
+            JSONObject local = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data");
+            String serial = local.optString("serial_no", "");
+            if (serial.length() != 16) { return; }
+            HttpURLConnection connection = (HttpURLConnection) new URL(CLOUD_ENDPOINT + "/api/v1/terminal/account?serial_no=" + serial).openConnection();
+            connection.setConnectTimeout(5000); connection.setReadTimeout(8000); connection.setRequestMethod("GET");
+            if (connection.getResponseCode() != 200) { return; }
+            InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream();
+            try { byte[] buffer = new byte[1024]; int count; while ((count = input.read(buffer)) != -1 && output.size() <= 65536) { output.write(buffer, 0, count); } } finally { input.close(); connection.disconnect(); }
+            JSONObject result = new JSONObject(output.toString("UTF-8")).getJSONObject("data");
+            prefs.edit().putString("cloud_username", result.optString("username", "")).apply();
+        } catch (Exception ignored) { }
+    }
+
     private void showTerminalSerial() {
         try {
             JSONObject settings = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data");
@@ -274,39 +295,8 @@ public class MainActivity extends Activity {
     }
 
     private void showBroadcastInfo() {
-        boolean configured = !prefs.getString("cloud_token", "").isEmpty();
-        String message = configured
-            ? "终端已配置云端同步。公众号消息任务按店铺隔离，请在云端账户页面创建群发任务，运营者审核并配置公众号后发送。"
-            : "请先在“云端同步”中配置终端令牌，再使用云端账户页面创建公众号群发任务。";
+        String message = "请先访问 liteshop.250886.xyz 注册/登录并绑定当前设备。公众号消息任务按店铺隔离，请在云端账户页面创建群发任务，运营者审核并配置公众号后发送。";
         new AlertDialog.Builder(this).setTitle("公众号群发").setMessage(message).setPositiveButton("知道了", null).show();
-    }
-
-    private void configureCloud() {
-        LinearLayout fields = new LinearLayout(this);
-        fields.setOrientation(LinearLayout.VERTICAL); fields.setPadding(24, 8, 24, 8);
-        final android.widget.TextView endpoint = new android.widget.TextView(this);
-        endpoint.setText("云端地址：" + CLOUD_ENDPOINT); fields.addView(endpoint);
-        final android.widget.EditText token = new android.widget.EditText(this);
-        token.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        token.setSingleLine(true); token.setHint("终端同步令牌"); token.setText(prefs.getString("cloud_token", "")); fields.addView(token);
-        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("云端同步设置").setView(fields)
-            .setNegativeButton("取消", null).setPositiveButton("保存", null).create();
-        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
-            @Override public void onShow(DialogInterface ignored) {
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
-                    @Override public void onClick(View v) {
-                        String key = token.getText().toString();
-                        if (key.length() < 16) {
-                            token.setError("请输入至少 16 位令牌"); return;
-                        }
-                        prefs.edit().putString("cloud_endpoint", CLOUD_ENDPOINT)
-                            .putString("cloud_token", key).apply();
-                        dialog.dismiss(); syncCloud();
-                    }
-                });
-            }
-        });
-        dialog.show();
     }
 
     private void syncCloud() {
@@ -362,6 +352,13 @@ public class MainActivity extends Activity {
         });
     }
     public final class TerminalBridge {
+        @JavascriptInterface public void showCloudLogin() { runOnUiThread(new Runnable() { @Override public void run() { MainActivity.this.showCloudLogin(); } }); }
+        @JavascriptInterface public String getCloudAccountInfo() {
+            try {
+                String username = prefs.getString("cloud_username", "");
+                return new JSONObject().put("bound", username.length() > 0).put("username", username).toString();
+            } catch (Exception e) { return "{\"bound\":false,\"username\":\"\"}"; }
+        }
         @JavascriptInterface public String getTerminalInfo() {
             try {
                 return new JSONObject().put("platform", "android").put("api", Build.VERSION.SDK_INT)

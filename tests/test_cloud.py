@@ -207,6 +207,9 @@ class CloudTests(unittest.TestCase):
         auth = {"Authorization": "Bearer " + user_token}
         status, response = self.request("POST", "/api/v1/account/terminals", {"serial_no": serial}, auth=False, extra_headers=auth)
         self.assertEqual(status, 201, response)
+        status, response = self.request("GET", "/api/v1/terminal/account?serial_no=" + serial, auth=False)
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["data"]["username"], "owner")
         status, response = self.request("GET", "/api/v1/account/members", auth=False, extra_headers=auth)
         self.assertEqual(status, 200, response)
         self.assertEqual([m["member_id"] for m in response["data"]], [self.member])

@@ -216,7 +216,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             if (!shop.isNull("settings_json")) {
                 try { settings = new JSONObject(shop.getString("settings_json")); } catch (JSONException ignored) { }
             }
-            return object("id", shop.getString("id"), "name", shop.getString("name"), "has_local_password", !shop.isNull("local_password_hash"), "serial_no", device.getString("serial_no"), "settings", settings);
+            return object("id", shop.getString("id"), "name", shop.getString("name"), "device_id", device.getString("id"), "has_local_password", !shop.isNull("local_password_hash"), "serial_no", device.getString("serial_no"), "settings", settings);
         }
         if (path.equals("members") || path.startsWith("members?")) {
             String query = "", offset = "0";

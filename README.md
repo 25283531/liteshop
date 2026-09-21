@@ -95,7 +95,7 @@ docker compose -f apps/cloud/docker-compose.yml up -d --build
 curl http://127.0.0.1:8787/healthz
 ```
 
-部署完成后访问 `http://服务器地址:8787/` 打开云端管理台，输入 `LITESHOP_ADMIN_TOKEN` 管理令牌即可查看门店、终端、会员、会员卡、同步事件统计并修改管理台显示设置；`/healthz` 仍返回 JSON 健康状态。请保存三个令牌用于后续重启；终端顶部「云端同步」填写服务地址和终端令牌。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。终端同步令牌只用于受控终端上传；普通用户使用邮箱账户和终端序列号绑定，微信小程序仍不得持有内部读取令牌。
+部署完成后访问 `http://服务器地址:8787/` 打开云端管理台，输入 `LITESHOP_ADMIN_TOKEN` 管理令牌即可查看门店、终端、会员、会员卡、同步事件统计并修改管理台显示设置；`/healthz` 仍返回 JSON 健康状态。请保存三个令牌用于后续重启；安卓终端不再要求输入云端同步令牌；点击「登录/注册云端」后访问 liteshop.250886.xyz，并使用终端序列号绑定设备。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。终端同步令牌只用于受控终端上传；普通用户使用邮箱账户和终端序列号绑定，微信小程序仍不得持有内部读取令牌。
 
 - [Validate 工作流](https://github.com/25283531/liteshop/actions/workflows/ci.yml)：Python、浏览器、APK 构建、lint、API 19/28 模拟器测试；下载产物 `liteshop-terminal-debug` 获取 APK。
 - [Cloud API 验证工作流](https://github.com/25283531/liteshop/actions/workflows/cloud.yml)：云端测试、Compose 校验及容器健康检查。

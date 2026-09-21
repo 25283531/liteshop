@@ -363,6 +363,14 @@ class CloudStore:
             self.conn.execute("INSERT OR IGNORE INTO user_terminal VALUES (?,?,?,?)", (user_id, row[0], row[1], stamp()))
             return {"device_id": row[0], "shop_id": row[1], "serial_no": serial}
 
+    def terminal_account(self, serial):
+        if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial.strip().upper()):
+            return None
+        serial = serial.strip().upper()
+        with self.lock:
+            row = self.conn.execute("SELECT u.username FROM user_terminal ut JOIN terminal_registry t ON t.device_id=ut.device_id JOIN cloud_user u ON u.user_id=ut.user_id WHERE t.serial_no=? ORDER BY ut.bound_at DESC LIMIT 1", (serial,)).fetchone()
+            return row[0] if row else None
+
     def user_summary(self, user_id):
         with self.lock:
             shops = [dict(r) for r in self.conn.execute("SELECT s.shop_id,s.name,COUNT(DISTINCT m.member_id) AS member_count,COUNT(DISTINCT c.card_id) AS card_count,COALESCE((SELECT COUNT(*) FROM cloud_event e WHERE e.shop_id=s.shop_id AND e.event_type='CARD_TRANSACTION'),0) AS transaction_count FROM user_terminal ut JOIN cloud_shop s ON s.shop_id=ut.shop_id LEFT JOIN member_projection m ON m.shop_id=ut.shop_id LEFT JOIN card_projection c ON c.shop_id=ut.shop_id WHERE ut.user_id=? GROUP BY s.shop_id", (user_id,)).fetchall()]
@@ -528,6 +536,11 @@ class Handler(BaseHTTPRequestHandler):
             user = self.user_auth()
             if user:
                 self.respond(200, {"ok": True, "data": {"user": user, **self.server.store.user_summary(user["user_id"])}})
+            return
+        if parsed.path == "/api/v1/terminal/account":
+            serial = parse_qs(parsed.query).get("serial_no", [""])[0]
+            username = self.server.store.terminal_account(serial)
+            self.respond(200, {"ok": True, "data": {"bound": bool(username), "username": username or ""}})
             return
         if parsed.path == "/api/v1/account/members":
             user = self.user_auth()
