@@ -169,7 +169,7 @@ class ShopService:
             result = self.require("member", member_id)
             self.emit("MEMBER_UPDATED", member_id, result)
             return result
-        return self.command(request_id, "UPDATE_MEMBER", dict(member_id=member_id, version=version, changes=changes), execute)
+        return self.command(request_id, "UPDATE_MEMBER", dict(member_id=member_id, version=version, password=password, changes=changes), execute)
 
     def update_settings(self, request_id, name=None, settings=None, local_password=None):
         def execute():
@@ -288,7 +288,7 @@ class ShopService:
         return self.command(request_id, "CARD_STATUS", dict(card_id=card_id, status=status, version=version), execute)
 
     def transact(self, request_id, card_id, kind, amount=0, times=0, source_id=None, remark="", password=None):
-        payload = dict(card_id=card_id, kind=kind, amount=amount, times=times, source_id=source_id, remark=remark)
+        payload = dict(card_id=card_id, kind=kind, amount=amount, times=times, source_id=source_id, remark=remark, password=password)
         def execute():
             integer(amount, "amount", -2_000_000_000)
             integer(times, "times", -2_000_000_000)
@@ -352,7 +352,7 @@ class ShopService:
             self.repo.update("points_account", member_id, dict(balance=balance, updated_at=row["created_at"]))
             self.emit("POINTS_CHANGED", row["id"], row)
             return row
-        return self.command(request_id, "POINTS", dict(member_id=member_id, points=points, remark=remark), execute)
+        return self.command(request_id, "POINTS", dict(member_id=member_id, points=points, remark=remark, password=password), execute)
 
     def member_detail(self, member_id):
         member = self.require("member", member_id)
