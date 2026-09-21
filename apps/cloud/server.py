@@ -7,8 +7,9 @@ import os
 import sqlite3
 import time
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 
 SCHEMA = """
@@ -41,7 +42,12 @@ CREATE TABLE IF NOT EXISTS terminal_registry (
 CREATE TABLE IF NOT EXISTS cloud_shop (
   shop_id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cloud_settings (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
+);
 """
+
+WEB_ROOT = Path(__file__).with_name("web")
 
 
 def stamp():
@@ -129,6 +135,13 @@ class CloudStore:
     def _project(self, event):
         payload = event["payload"]
         kind = event["event_type"]
+        if kind in ("SHOP_INITIALIZED", "SHOP_SETTINGS_UPDATED"):
+            shop_id = payload.get("shop_id", event["shop_id"])
+            name = payload.get("name", payload.get("shop_name", ""))
+            if not isinstance(shop_id, str) or not isinstance(name, str):
+                raise ValueError("shop event requires string shop_id and name")
+            self.conn.execute("INSERT INTO cloud_shop(shop_id,name,updated_at) VALUES (?,?,?) ON CONFLICT(shop_id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", (shop_id, name, stamp()))
+            return
         if kind in ("MEMBER_CREATED", "MEMBER_UPDATED", "MEMBER_DELETED"):
             self.conn.execute("INSERT INTO member_projection VALUES (?,?,?,?) ON CONFLICT(member_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",
                               (event["entity_id"], event["shop_id"], json.dumps(payload, ensure_ascii=False), stamp()))
@@ -160,8 +173,34 @@ class CloudStore:
 
     def shops(self):
         with self.lock:
-            rows = self.conn.execute("SELECT shop_id,COUNT(*) AS member_count FROM member_projection GROUP BY shop_id ORDER BY shop_id").fetchall()
+            rows = self.conn.execute("SELECT s.shop_id,s.name,COUNT(m.member_id) AS member_count,s.updated_at FROM cloud_shop s LEFT JOIN member_projection m ON m.shop_id=s.shop_id GROUP BY s.shop_id ORDER BY s.shop_id").fetchall()
             return [dict(r) for r in rows]
+
+    def admin_summary(self):
+        with self.lock:
+            counts = {
+                "events": self.conn.execute("SELECT COUNT(*) FROM cloud_event").fetchone()[0],
+                "members": self.conn.execute("SELECT COUNT(*) FROM member_projection").fetchone()[0],
+                "cards": self.conn.execute("SELECT COUNT(*) FROM card_projection").fetchone()[0],
+                "terminals": self.conn.execute("SELECT COUNT(*) FROM terminal_registry").fetchone()[0],
+                "shops": self.conn.execute("SELECT COUNT(*) FROM cloud_shop").fetchone()[0],
+            }
+            terminals = [dict(r) for r in self.conn.execute("SELECT device_id,shop_id,name,status,last_seen FROM terminal_registry ORDER BY last_seen DESC").fetchall()]
+            settings = {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
+            return {"counts": counts, "shops": self.shops(), "terminals": terminals, "settings": settings}
+
+    def update_settings(self, values):
+        if not isinstance(values, dict):
+            raise ValueError("settings must be an object")
+        allowed = {"display_name", "notice"}
+        if any(key not in allowed for key in values):
+            raise ValueError("unsupported setting")
+        with self.lock, self.conn:
+            for key, value in values.items():
+                if not isinstance(value, str) or len(value) > 200:
+                    raise ValueError("setting values must be strings of at most 200 characters")
+                self.conn.execute("INSERT INTO cloud_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (key, value, stamp()))
+            return {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
 
     def members(self, shop_id=None):
         with self.lock:
@@ -207,6 +246,9 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def admin_auth(self):
+        return self.auth("admin")
+
     def body(self):
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > 1024 * 1024:
@@ -217,6 +259,15 @@ class Handler(BaseHTTPRequestHandler):
         return value
 
     def do_GET(self):
+        parsed = urlsplit(self.path)
+        if parsed.path == "/":
+            self.serve_static("index.html", "text/html; charset=utf-8")
+            return
+        if parsed.path.startswith("/admin/"):
+            asset = parsed.path.removeprefix("/admin/")
+            if asset in ("app.js", "app.css"):
+                self.serve_static(asset, "text/javascript; charset=utf-8" if asset.endswith(".js") else "text/css; charset=utf-8")
+                return
         if self.path == "/healthz":
             self.respond(200, {"ok": True, "service": "cloud-api"})
             return
@@ -230,7 +281,6 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.store.member(member_id)
             self.respond(200, {"ok": True, "data": data, "last_synced_at": data.get("last_synced_at") if data else None})
             return
-        parsed = urlsplit(self.path)
         if parsed.path == "/api/v1/cloud/shops":
             if not self.auth("miniapp"):
                 return
@@ -242,6 +292,11 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import parse_qs
             shop_id = parse_qs(parsed.query).get("shop_id", [None])[0]
             self.respond(200, {"ok": True, "data": self.server.store.members(shop_id)})
+            return
+        if parsed.path == "/api/v1/admin/summary":
+            if not self.admin_auth():
+                return
+            self.respond(200, {"ok": True, "data": self.server.store.admin_summary()})
             return
         self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "接口不存在"}})
 
@@ -271,12 +326,36 @@ class Handler(BaseHTTPRequestHandler):
         except sqlite3.Error:
             self.respond(503, {"ok": False, "error": {"code": "DATABASE_UNAVAILABLE", "message": "retry the same events"}})
 
+    def do_PUT(self):
+        if urlsplit(self.path).path != "/api/v1/admin/settings":
+            self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "接口不存在"}})
+            return
+        if not self.admin_auth():
+            return
+        try:
+            self.respond(200, {"ok": True, "data": self.server.store.update_settings(self.body())})
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self.respond(400, {"ok": False, "error": {"code": "INVALID_SETTINGS", "message": str(exc)}})
+
+    def serve_static(self, name, content_type):
+        path = (WEB_ROOT / name).resolve()
+        if WEB_ROOT.resolve() not in path.parents or not path.is_file():
+            self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "页面不存在"}})
+            return
+        encoded = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(encoded)
+
 
 class CloudServer(ThreadingHTTPServer):
     daemon_threads = True
-    def __init__(self, address, db, terminal_token, miniapp_token):
+    def __init__(self, address, db, terminal_token, miniapp_token, admin_token=None):
         self.store = CloudStore(db)
-        self.tokens = {"terminal": terminal_token, "miniapp": miniapp_token}
+        self.tokens = {"terminal": terminal_token, "miniapp": miniapp_token, "admin": admin_token or miniapp_token}
         super().__init__(address, Handler)
 
 
@@ -288,10 +367,11 @@ def main():
     args = parser.parse_args()
     terminal_token = os.environ.get("LITESHOP_TERMINAL_TOKEN")
     miniapp_token = os.environ.get("LITESHOP_MINIAPP_TOKEN")
-    if not terminal_token or not miniapp_token:
-        parser.error("LITESHOP_TERMINAL_TOKEN and LITESHOP_MINIAPP_TOKEN are required")
+    admin_token = os.environ.get("LITESHOP_ADMIN_TOKEN")
+    if not terminal_token or not miniapp_token or not admin_token:
+        parser.error("LITESHOP_TERMINAL_TOKEN, LITESHOP_MINIAPP_TOKEN and LITESHOP_ADMIN_TOKEN are required")
     os.makedirs(os.path.dirname(os.path.abspath(args.db)), exist_ok=True)
-    server = CloudServer((args.host, args.port), args.db, terminal_token, miniapp_token)
+    server = CloudServer((args.host, args.port), args.db, terminal_token, miniapp_token, admin_token)
     print("LiteShop Cloud API: http://{}:{}".format(args.host, args.port), flush=True)
     try:
         server.serve_forever()

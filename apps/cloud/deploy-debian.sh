@@ -32,10 +32,12 @@ mkdir -p apps/cloud
 if [[ ! -f apps/cloud/.env ]]; then
   terminal_token="$(openssl rand -hex 32)"
   miniapp_token="$(openssl rand -hex 32)"
+  admin_token="$(openssl rand -hex 32)"
   umask 077
   cat > apps/cloud/.env <<EOF
 LITESHOP_TERMINAL_TOKEN=${terminal_token}
 LITESHOP_MINIAPP_TOKEN=${miniapp_token}
+LITESHOP_ADMIN_TOKEN=${admin_token}
 EOF
   echo "已生成 apps/cloud/.env，请妥善保存令牌。"
 else

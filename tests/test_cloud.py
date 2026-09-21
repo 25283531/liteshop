@@ -13,12 +13,13 @@ from apps.cloud.server import CloudServer, CloudStore
 
 class CloudTests(unittest.TestCase):
     token = "cloud-terminal-test-token-123456789"
+    admin_token = "cloud-admin-test-token-123456789"
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "cloud.sqlite"
         self.server = CloudServer(("127.0.0.1", 0), self.db, self.token,
-                                  "cloud-internal-reader-test-token-123456")
+                                  "cloud-internal-reader-test-token-123456", self.admin_token)
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.worker.start()
         self.shop, self.device, self.member = (str(uuid4()) for _ in range(3))
@@ -64,6 +65,27 @@ class CloudTests(unittest.TestCase):
             self.assertEqual(status, 200, response)
             self.assertEqual(response["data"]["accepted"], [{"event_id": event["event_id"], "status": expected}])
         self.assertEqual(self.server.store.member(self.member)["name"], "测试会员")
+
+    def test_admin_web_and_settings(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
+        try:
+            connection.request("GET", "/")
+            response = connection.getresponse()
+            html = response.read().decode()
+            self.assertEqual(response.status, 200)
+            self.assertIn("LiteShop", html)
+        finally:
+            connection.close()
+
+        status, _ = self.request("GET", "/api/v1/admin/summary", auth=False)
+        self.assertEqual(status, 401)
+        headers = {"Authorization": "Bearer " + self.admin_token}
+        status, response = self.request("GET", "/api/v1/admin/summary", extra_headers=headers)
+        self.assertEqual(status, 200, response)
+        self.assertIn("counts", response["data"])
+        status, response = self.request("PUT", "/api/v1/admin/settings", {"display_name": "总部云端"}, extra_headers=headers)
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["data"]["display_name"], "总部云端")
 
     def test_conflicting_batch_rolls_back(self):
         first = self.event()

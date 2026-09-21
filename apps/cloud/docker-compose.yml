@@ -8,6 +8,7 @@ services:
     environment:
       LITESHOP_TERMINAL_TOKEN: ${LITESHOP_TERMINAL_TOKEN:?set terminal token}
       LITESHOP_MINIAPP_TOKEN: ${LITESHOP_MINIAPP_TOKEN:?set miniapp token}
+      LITESHOP_ADMIN_TOKEN: ${LITESHOP_ADMIN_TOKEN:?set admin token}
     volumes:
       - cloud-data:/data
     restart: unless-stopped

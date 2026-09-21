@@ -47,6 +47,7 @@ LiteShop 是面向小型门店的会员业务系统。**安卓机顶盒是门店
 | --- | --- | --- |
 | `LITESHOP_TERMINAL_TOKEN` | 是 | 安卓机顶盒上传同步事件时使用的 Bearer 令牌 |
 | `LITESHOP_MINIAPP_TOKEN` | 是 | 云端内部读取接口使用的令牌；不要放入微信小程序前端 |
+| `LITESHOP_ADMIN_TOKEN` | 是 | 云端 Web 管理台和管理 API 使用的令牌；不要与前两个令牌复用 |
 
 Compose 会将容器的 `8787` 端口发布到服务器的 `8787` 端口：
 
@@ -87,11 +88,12 @@ sudo bash apps/cloud/deploy-debian.sh
 ```bash
 export LITESHOP_TERMINAL_TOKEN="$(openssl rand -hex 32)"
 export LITESHOP_MINIAPP_TOKEN="$(openssl rand -hex 32)"
+export LITESHOP_ADMIN_TOKEN="$(openssl rand -hex 32)"
 docker compose -f apps/cloud/docker-compose.yml up -d --build
 curl http://127.0.0.1:8787/healthz
 ```
 
-请保存两枚令牌用于后续重启；终端顶部「云端同步」填写服务地址和终端令牌。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。目前共享令牌只适用于受控联调，微信正式登录和按设备授权尚待实现，小程序端不得持有内部读取令牌。
+部署完成后访问 `http://服务器地址:8787/` 打开云端管理台，输入 `LITESHOP_ADMIN_TOKEN` 管理令牌即可查看门店、终端、会员、会员卡、同步事件统计并修改管理台显示设置；`/healthz` 仍返回 JSON 健康状态。请保存三个令牌用于后续重启；终端顶部「云端同步」填写服务地址和终端令牌。命名卷 `cloud-data` 保存云端投影，机顶盒账本仍保存在各自设备。部署、联调和 HTTPS 配置边界见 [云端说明](docs/CLOUD_DEPLOYMENT.md)。目前共享令牌只适用于受控联调，微信正式登录和按设备授权尚待实现，小程序端不得持有内部读取令牌。
 
 - [Validate 工作流](https://github.com/25283531/liteshop/actions/workflows/ci.yml)：Python、浏览器、APK 构建、lint、API 19/28 模拟器测试；下载产物 `liteshop-terminal-debug` 获取 APK。
 - [Cloud API 验证工作流](https://github.com/25283531/liteshop/actions/workflows/cloud.yml)：云端测试、Compose 校验及容器健康检查。

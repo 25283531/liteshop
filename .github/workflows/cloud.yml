@@ -21,6 +21,7 @@ jobs:
         env:
           LITESHOP_TERMINAL_TOKEN: ci-terminal-token-12345678901234567890
           LITESHOP_MINIAPP_TOKEN: ci-internal-reader-token-12345678901234
+          LITESHOP_ADMIN_TOKEN: ci-admin-token-12345678901234567890
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -36,6 +37,7 @@ jobs:
             --publish 127.0.0.1:18787:8787 \
             --env LITESHOP_TERMINAL_TOKEN=ci-terminal-token-12345678901234567890 \
             --env LITESHOP_MINIAPP_TOKEN=ci-internal-reader-token-12345678901234 \
+            --env LITESHOP_ADMIN_TOKEN=ci-admin-token-12345678901234567890 \
             liteshop-cloud-api:ci
           trap 'docker logs liteshop-cloud-smoke; docker rm --force liteshop-cloud-smoke' EXIT
           python - <<'PY'

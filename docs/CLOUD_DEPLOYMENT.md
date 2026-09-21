@@ -26,13 +26,13 @@ sudo bash apps/cloud/deploy-debian.sh
 
 需要云端服务器安装 Docker Engine 与 Compose。仓库根目录执行 README 中的令牌生成和 `docker compose -f apps/cloud/docker-compose.yml up -d --build`。Compose 的 build context 是仓库根目录，Dockerfile 为 `apps/cloud/Dockerfile`，服务默认端口 8787。
 
-令牌也可保存于云端服务器的 `apps/cloud/.env`（不要提交到 Git），分别设置 `LITESHOP_TERMINAL_TOKEN` 和 `LITESHOP_MINIAPP_TOKEN`。两者须使用不同的随机值。`cloud-data` 命名卷挂载 `/data`，数据库为 `/data/cloud.sqlite`，重新创建容器会保留；不要执行 `down -v` 删除数据卷。
+令牌也可保存于云端服务器的 `apps/cloud/.env`（不要提交到 Git），分别设置 `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` 和 `LITESHOP_ADMIN_TOKEN`。三个令牌须使用不同的随机值；管理员令牌用于打开根路径的 Web 管理台。`cloud-data` 命名卷挂载 `/data`，数据库为 `/data/cloud.sqlite`，重新创建容器会保留；不要执行 `down -v` 删除数据卷。
 
 部署映射清单：
 
 | 项目 | 配置 | 用途 |
 | --- | --- | --- |
-| 必填环境变量 | `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` | 分别用于终端同步鉴权和云端内部读取鉴权 |
+| 必填环境变量 | `LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN`、`LITESHOP_ADMIN_TOKEN` | 分别用于终端同步、内部读取和 Web 管理台鉴权 |
 | 网络端口 | `8787:8787` | 对外提供 Cloud API；生产环境应通过 HTTPS 反向代理转发 |
 | 默认持久化 | Docker 卷 `cloud-data:/data` | 保存 `/data/cloud.sqlite` 云端数据库和同步投影 |
 | 可选宿主机目录 | `./apps/cloud/data:/data` | 需要直接管理数据库文件或执行文件级备份时使用；与命名卷二选一 |
