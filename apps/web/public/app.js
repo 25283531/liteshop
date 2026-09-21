@@ -10,7 +10,7 @@
     function money(value) { var a = Math.abs(value); return (value < 0 ? "-" : "") + Math.floor(a / 100) + "." + ("0" + a % 100).slice(-2); }
     function date(value) { var d = new Date(value); return (d.getMonth() + 1) + "/" + d.getDate() + " " + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
     var names = {RECHARGE: "充值", CONSUME: "消费", GIFT: "赠送", ADJUST: "调整", REFUND: "退款", CREDIT_TIMES: "充次", DEDUCT_TIMES: "扣次"};
-    var errors = {INSUFFICIENT_BALANCE: "余额或剩余次数不足", INSUFFICIENT_POINTS: "积分不足", INVALID_INPUT: "请检查填写内容", CONSTRAINT_VIOLATION: "资料冲突，请检查手机号是否已存在", REFUND_EXCEEDED: "退款超过原消费剩余可退数量", MEMBER_INACTIVE: "会员已停用", CARD_INACTIVE: "卡已停用、挂失或过期", VERSION_CONFLICT: "资料已发生变化，请刷新后再操作", IDEMPOTENCY_CONFLICT: "请求编号冲突，请核查流水", NOT_FOUND: "记录不存在"};
+    var errors = {INSUFFICIENT_BALANCE: "余额或剩余次数不足", INSUFFICIENT_POINTS: "积分不足", INVALID_INPUT: "请检查填写内容", CONSTRAINT_VIOLATION: "资料冲突，请检查手机号是否已存在", REFUND_EXCEEDED: "退款超过原消费剩余可退数量", MEMBER_INACTIVE: "会员已停用", CARD_INACTIVE: "卡已停用、挂失或过期", VERSION_CONFLICT: "资料已发生变化，请刷新后再操作", IDEMPOTENCY_CONFLICT: "请求编号冲突，请核查流水", NOT_FOUND: "记录不存在", PASSWORD_REQUIRED: "请先在门店设置中设置本地密码", PASSWORD_INVALID: "本地密码错误"};
     var bridgeCallbacks = {}, bridgeSequence = 0, pageId = String(new Date().getTime());
     window.LiteShopReceive = function (id, code, text) {
         if (bridgeCallbacks[id]) { bridgeCallbacks[id](code, text); }
@@ -114,10 +114,10 @@
             state.member.transactions.forEach(function (t) { if (t.id === id) { tx = t; } });
         }
         if (action === "new" || action === "edit") { title = action === "new" ? "新增会员" : "编辑会员"; fields = field("name", "会员姓名", action === "edit" ? m.name : "", true) + field("phone", "手机号（可选）", action === "edit" ? m.phone : "") + field("inviter_name", "邀请人（可稍后补填）", action === "edit" ? m.inviter_name : "") + field("remark", "备注", action === "edit" ? m.remark : ""); }
-        else if (action === "member-status") { title = m.status ? "停用会员" : "启用会员"; fields = '<p>停用后将无法开卡和进行交易，已有账本记录保留。</p>'; }
+        else if (action === "member-status") { title = m.status ? "停用会员" : "启用会员"; fields = '<p>停用后将无法开卡和进行交易，已有账本记录保留。</p>' + passwordField(); }
         else if (action === "delete-member") { title = "删除会员数据"; fields = '<p>删除后会员将从本地搜索中隐藏，账本和审计记录仍保留。此操作需要本地设置密码。</p>' + '<label for="f-password">本地设置密码</label><input id="f-password" type="password" required autocomplete="current-password">'; }
         else if (action === "open") { title = "开通会员卡"; fields = select("type", "卡类型", state.types.filter(function (t) { return Number(t.status) === 1; }).map(function (t) { return [t.id, t.name + (t.mode === "COUNT" ? " · 计次" : " · 储值")]; })); }
-        else if (action === "points") { title = "调整积分"; fields = field("quantity", "积分变动（增加填正数，扣除填负数）", "", true) + field("remark", "调整原因", "", true); }
+        else if (action === "points") { title = "调整积分"; fields = field("quantity", "积分变动（增加填正数，扣除填负数）", "", true) + field("remark", "调整原因", "", true) + passwordField(); }
         else if (action === "card-status") { title = "修改卡片状态"; fields = select("status", "卡片状态", [["ACTIVE", "正常"], ["LOST", "挂失"], ["DISABLED", "停用"]], card.status); }
         else {
             if (action === "refund") {
@@ -126,6 +126,7 @@
             } else { title = names[action]; }
             if (!card) { return; }
             fields += field("quantity", card.mode === "STORED" ? "金额（元，最多两位小数）" : "次数（正整数）", "", true) + field("remark", "备注", "");
+            if (action === "RECHARGE" || action === "CREDIT_TIMES") { fields += passwordField(); }
         }
         state.form = {action: action, member: m, card: card, tx: tx};
         state.opener = document.activeElement;
@@ -135,6 +136,7 @@
         var first = el("fields").querySelector("input,select");
         (first || el("submit")).focus();
     }
+    function passwordField() { return '<label for="f-password">本地设置密码</label><input id="f-password" type="password" required autocomplete="current-password">'; }
     function closeForm() { if (state.busy) { return; } el("modal").hidden = true; if (state.opener) { state.opener.focus(); } }
     function quantity(stored, signed) {
         var raw = value("quantity").replace(/^\s+|\s+$/g, "");
@@ -174,12 +176,12 @@
                 command = a === "new" ? "create-member" : "update-member";
                 p = {name: value("name"), phone: value("phone") || null, inviter_name: value("inviter_name") || null, remark: value("remark")};
                 if (a === "edit") { p.member_id = f.member.id; p.version = f.member.version; }
-            } else if (a === "member-status") { command = "update-member"; p = {member_id: f.member.id, version: f.member.version, status: f.member.status ? 0 : 1}; }
+            } else if (a === "member-status") { command = "update-member"; p = {member_id: f.member.id, version: f.member.version, status: f.member.status ? 0 : 1, password: value("password")}; }
             else if (a === "delete-member") { command = "delete-member"; p = {member_id: f.member.id, version: f.member.version, password: value("password")}; }
             else if (a === "open") { command = "open-card"; p = {member_id: f.member.id, card_type_id: value("type")}; }
-            else if (a === "points") { command = "points"; p = {member_id: f.member.id, points: quantity(false, true), remark: value("remark")}; }
+            else if (a === "points") { command = "points"; p = {member_id: f.member.id, points: quantity(false, true), remark: value("remark"), password: value("password")}; }
             else if (a === "card-status") { command = "card-status"; p = {card_id: f.card.id, version: f.card.version, status: value("status")}; }
-            else { command = "transact"; p = {card_id: f.card.id, kind: a === "refund" ? "REFUND" : a, remark: value("remark")}; p[f.card.mode === "STORED" ? "amount" : "times"] = quantity(f.card.mode === "STORED", false); if (a === "refund") { p.source_id = f.tx.id; } }
+            else { command = "transact"; p = {card_id: f.card.id, kind: a === "refund" ? "REFUND" : a, remark: value("remark")}; p[f.card.mode === "STORED" ? "amount" : "times"] = quantity(f.card.mode === "STORED", false); if (a === "refund") { p.source_id = f.tx.id; } if (a === "RECHARGE" || a === "CREDIT_TIMES") { p.password = value("password"); } }
             p.request_id = "web-" + new Date().getTime() + "-" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
             var pending = {action: command, payload: p, memberId: f.member ? f.member.id : null, description: el("form-title").textContent + " · " + el("form-context").textContent};
             if (localStorage.getItem("liteshop.pending")) { throw new Error("已有待确认请求，请刷新页面后处理"); }

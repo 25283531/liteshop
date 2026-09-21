@@ -144,7 +144,7 @@ class ShopService:
             return result
         return self.command(request_id, "CREATE_MEMBER", payload, execute)
 
-    def update_member(self, request_id, member_id, version, **changes):
+    def update_member(self, request_id, member_id, version, password=None, **changes):
         def execute():
             member = self.require("member", member_id)
             integer(version, "version", 1)
@@ -154,6 +154,8 @@ class ShopService:
                 raise BusinessError("MEMBER_INACTIVE", "Member is archived")
             if not changes or not set(changes) <= {"name", "phone", "remark", "status", "inviter_name", "inviter_member_id"}:
                 raise BusinessError("INVALID_INPUT", "Unsupported member changes")
+            if "status" in changes:
+                self.verify_local_password(password)
             updates = dict(changes)
             for key in ("name", "phone", "remark", "inviter_name"):
                 if key in updates:
@@ -229,21 +231,25 @@ class ShopService:
             return self.repo.one("shop", self.ctx["shop_id"])
         return self.command(request_id, "UPDATE_SETTINGS", dict(name=name, settings=settings, local_password=bool(local_password)), execute)
 
+    def verify_local_password(self, password):
+        stored = self.repo.conn.execute("SELECT local_password_hash FROM shop WHERE id=?", (self.ctx["shop_id"],)).fetchone()[0]
+        if not stored:
+            raise BusinessError("PASSWORD_REQUIRED", "请先设置本地设置密码")
+        valid = False
+        try:
+            _, rounds, salt_hex, digest_hex = stored.split("$")
+            valid = hmac.compare_digest(hashlib.pbkdf2_hmac("sha256", (password or "").encode(), bytes.fromhex(salt_hex), int(rounds)).hex(), digest_hex)
+        except (AttributeError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise BusinessError("PASSWORD_INVALID", "本地设置密码错误")
+
     def delete_member(self, request_id, member_id, version, password):
         def execute():
             member = self.require("member", member_id)
             if version != member["version"]:
                 raise BusinessError("VERSION_CONFLICT", "Member was changed; reload first")
-            stored = self.repo.conn.execute("SELECT local_password_hash FROM shop WHERE id=?", (self.ctx["shop_id"],)).fetchone()[0]
-            if not stored:
-                raise BusinessError("PASSWORD_REQUIRED", "请先设置本地设置密码")
-            try:
-                _, rounds, salt_hex, digest_hex = stored.split("$")
-                valid = hmac.compare_digest(hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), int(rounds)).hex(), digest_hex)
-            except Exception:
-                valid = False
-            if not valid:
-                raise BusinessError("PASSWORD_INVALID", "本地设置密码错误")
+            self.verify_local_password(password)
             stamp = now()
             self.repo.update("member", member_id, dict(status=0, deleted_at=stamp, version=version+1, updated_at=stamp))
             result = self.require("member", member_id)
@@ -281,7 +287,7 @@ class ShopService:
             return result
         return self.command(request_id, "CARD_STATUS", dict(card_id=card_id, status=status, version=version), execute)
 
-    def transact(self, request_id, card_id, kind, amount=0, times=0, source_id=None, remark=""):
+    def transact(self, request_id, card_id, kind, amount=0, times=0, source_id=None, remark="", password=None):
         payload = dict(card_id=card_id, kind=kind, amount=amount, times=times, source_id=source_id, remark=remark)
         def execute():
             integer(amount, "amount", -2_000_000_000)
@@ -299,6 +305,8 @@ class ShopService:
             allowed = {"RECHARGE", "CONSUME", "GIFT", "ADJUST", "REFUND"} if mode == "STORED" else {"CREDIT_TIMES", "DEDUCT_TIMES", "ADJUST", "REFUND"}
             if kind not in allowed or value == 0 or (kind != "ADJUST" and value < 0):
                 raise BusinessError("INVALID_INPUT", "Invalid operation or quantity")
+            if kind in ("RECHARGE", "CREDIT_TIMES"):
+                self.verify_local_password(password)
             if kind == "REFUND":
                 source = self.require("ledger_transaction", source_id)
                 if source["card_id"] != card_id or source["kind"] not in ("CONSUME", "DEDUCT_TIMES"):
@@ -325,9 +333,10 @@ class ShopService:
             return transaction
         return self.command(request_id, "TRANSACT", payload, execute)
 
-    def change_points(self, request_id, member_id, points, remark):
+    def change_points(self, request_id, member_id, points, remark, password=None):
         def execute():
             self.active_member(member_id)
+            self.verify_local_password(password)
             integer(points, "points", -2_000_000_000)
             if points == 0:
                 raise BusinessError("INVALID_INPUT", "Points change must not be zero")

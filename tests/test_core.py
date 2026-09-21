@@ -10,6 +10,7 @@ class CoreTests(unittest.TestCase):
         self.repo = SQLiteRepository(Path(self.tmp.name) / "shop.sqlite")
         self.svc = ShopService(self.repo)
         self.svc.initialize("Demo Shop")
+        self.svc.update_settings("req-password", local_password="1234")
         self.member = self.svc.create_member("req-member", "Zhang San", "13800000000")
         self.card_type = next(x for x in self.repo.card_types() if x["mode"] == "STORED")
         self.card = self.svc.open_card("req-card", self.member["id"], self.card_type["id"])
@@ -19,9 +20,9 @@ class CoreTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_recharge_consume_refund_and_idempotency(self):
-        recharge = self.svc.transact("req-recharge", self.card["id"], "RECHARGE", amount=10000)
+        recharge = self.svc.transact("req-recharge", self.card["id"], "RECHARGE", amount=10000, password="1234")
         self.assertEqual(recharge["balance_after"], 10000)
-        self.assertEqual(self.svc.transact("req-recharge", self.card["id"], "RECHARGE", amount=10000)["id"], recharge["id"])
+        self.assertEqual(self.svc.transact("req-recharge", self.card["id"], "RECHARGE", amount=10000, password="1234")["id"], recharge["id"])
         consume = self.svc.transact("req-consume", self.card["id"], "CONSUME", amount=3500)
         self.assertEqual(consume["balance_after"], 6500)
         refund = self.svc.transact("req-refund", self.card["id"], "REFUND", amount=1000, source_id=consume["id"])
@@ -32,7 +33,7 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(self.repo.audit()["ok"])
 
     def test_points_and_atomic_rollback(self):
-        points = self.svc.change_points("req-points", self.member["id"], 120, "消费奖励")
+        points = self.svc.change_points("req-points", self.member["id"], 120, "消费奖励", "1234")
         self.assertEqual(points["balance_after"], 120)
         with self.assertRaises(BusinessError):
             self.svc.change_points("req-points-bad", self.member["id"], -121, "兑换")

@@ -272,6 +272,16 @@ public final class LocalStore extends SQLiteOpenHelper {
             ContentValues values = new ContentValues();
             if (input.has("name")) { values.put("name", string(input, "name", 200, true)); }
             if (input.has("settings") && !input.isNull("settings")) { values.put("settings_json", input.getJSONObject("settings").toString()); }
+            if (input.has("local_password") && !input.isNull("local_password")) {
+                String password = input.getString("local_password");
+                if (password.length() == 0) { values.putNull("local_password_hash"); }
+                else {
+                    if (password.length() < 4 || password.length() > 128) { reject("INVALID_INPUT", "本地密码长度必须为 4-128 位"); }
+                    values.put("local_password_hash", hashPassword(password));
+                }
+            }
+            // null means the settings form left the existing password unchanged;
+            // an empty string explicitly clears it.
             if (values.size() == 0) { reject("INVALID_INPUT", "没有要更新的设置"); }
             db.update("shop", values, "id=?", new String[] {ctx.getString("shop_id")});
             result = require(db, "shop", ctx.getString("shop_id"));
@@ -296,7 +306,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             if (input.has("remark")) { updates.put("remark", string(input, "remark", 1000, false)); }
             if (input.has("inviter_name")) { updates.put("inviter_name", optionalNullableText(input, "inviter_name", 200)); }
             if (input.has("inviter_member_id")) { updates.put("inviter_member_id", optionalNullableText(input, "inviter_member_id", 128)); }
-            if (input.has("status")) { updates.put("status", integer(input, "status", 0, 1)); }
+            if (input.has("status")) { verifyLocalPassword(db, input.optString("password", null)); updates.put("status", integer(input, "status", 0, 1)); }
             if (updates.length() == 0) { reject("INVALID_INPUT", "没有要更新的资料"); }
             updates.put("version", version + 1).put("updated_at", stamp);
             update(db, "member", id, updates);
@@ -326,6 +336,7 @@ public final class LocalStore extends SQLiteOpenHelper {
         } else if (action.equals("points")) {
             String id = string(input, "member_id", 128, true);
             activeMember(db, id);
+            verifyLocalPassword(db, input.optString("password", null));
             long points = integer(input, "points", -2000000000L, 2000000000L);
             if (points == 0) { reject("INVALID_INPUT", "积分变动不能为零"); }
             String note = string(input, "remark", 1000, true);
@@ -361,7 +372,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             : oneOf(kind, "CREDIT_TIMES", "DEDUCT_TIMES", "ADJUST", "REFUND");
         if (!valid || value == 0 || (!kind.equals("ADJUST") && value < 0)) { reject("INVALID_INPUT", "交易类型或数量错误"); }
         Object sourceId = JSONObject.NULL;
-        if (kind.equals("REFUND")) {
+            if (kind.equals("REFUND")) {
             String source = string(input, "source_id", 128, true);
             sourceId = source;
             JSONObject original = require(db, "ledger_transaction", source);
@@ -373,6 +384,7 @@ public final class LocalStore extends SQLiteOpenHelper {
             if (amount > -original.getLong("amount") - refunded.getLong("amount")
                 || times > -original.getLong("times") - refunded.getLong("times")) { reject("REFUND_EXCEEDED", "超过剩余可退数量"); }
         } else if (!input.isNull("source_id")) { reject("INVALID_INPUT", "只有退款可以关联原流水"); }
+        if (kind.equals("RECHARGE") || kind.equals("CREDIT_TIMES")) { verifyLocalPassword(db, input.optString("password", null)); }
         if (oneOf(kind, "CONSUME", "DEDUCT_TIMES")) { amount = -amount; times = -times; }
         long before = card.getLong("balance"), visits = card.getLong("remaining_times");
         long after = before + amount, remaining = visits + times;
@@ -393,11 +405,11 @@ public final class LocalStore extends SQLiteOpenHelper {
         String fields;
         if (action.equals("update-settings")) { fields = "name settings local_password"; }
         else if (action.equals("create-member")) { fields = "name phone inviter_name inviter_member_id remark"; }
-        else if (action.equals("update-member")) { fields = "member_id version name phone inviter_name inviter_member_id remark status"; }
+        else if (action.equals("update-member")) { fields = "member_id version name phone inviter_name inviter_member_id remark status password"; }
         else if (action.equals("open-card")) { fields = "member_id card_type_id expire_at"; }
         else if (action.equals("card-status")) { fields = "card_id version status"; }
-        else if (action.equals("transact")) { fields = "card_id kind amount times source_id remark"; }
-        else if (action.equals("points")) { fields = "member_id points remark"; }
+        else if (action.equals("transact")) { fields = "card_id kind amount times source_id remark password"; }
+        else if (action.equals("points")) { fields = "member_id points remark password"; }
         else { throw new Rejected("NOT_FOUND", "操作不存在"); }
         fields = " request_id " + fields + " ";
         Iterator<String> keys = input.keys();
@@ -412,6 +424,52 @@ public final class LocalStore extends SQLiteOpenHelper {
     private static void activeMember(SQLiteDatabase db, String id) throws JSONException {
         JSONObject member = require(db, "member", id);
         if (member.getInt("status") != 1 || !member.isNull("deleted_at")) { reject("MEMBER_INACTIVE", "会员已停用"); }
+    }
+
+    private static void verifyLocalPassword(SQLiteDatabase db, String password) throws JSONException {
+        JSONObject shop = rows(db, "SELECT local_password_hash FROM shop LIMIT 1").getJSONObject(0);
+        String stored = shop.isNull("local_password_hash") ? null : shop.getString("local_password_hash");
+        if (stored == null || stored.length() == 0) { return; }
+        try {
+            String[] parts = stored.split("\\$", -1);
+            if (parts.length != 4) { reject("PASSWORD_INVALID", "本地设置密码错误"); }
+            int rounds = Integer.parseInt(parts[1]);
+            byte[] salt = hex(parts[2]), expected = hex(parts[3]);
+            byte[] actual = pbkdf2(password == null ? "" : password, salt, rounds);
+            if (!MessageDigest.isEqual(actual, expected)) { reject("PASSWORD_INVALID", "本地设置密码错误"); }
+        } catch (Rejected e) { throw e; }
+        catch (Exception e) { reject("PASSWORD_INVALID", "本地设置密码错误"); }
+    }
+
+    private static byte[] hex(String value) {
+        if ((value.length() & 1) != 0) { throw new IllegalArgumentException(); }
+        byte[] out = new byte[value.length() / 2];
+        for (int i = 0; i < out.length; i++) { out[i] = (byte) Integer.parseInt(value.substring(i * 2, i * 2 + 2), 16); }
+        return out;
+    }
+
+    private static byte[] pbkdf2(String password, byte[] salt, int rounds) throws Exception {
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(password.getBytes("UTF-8"), "HmacSHA256"));
+        byte[] first = new byte[salt.length + 4]; System.arraycopy(salt, 0, first, 0, salt.length); first[salt.length + 3] = 1;
+        byte[] u = mac.doFinal(first), out = u.clone();
+        for (int i = 1; i < rounds; i++) {
+            u = mac.doFinal(u);
+            for (int j = 0; j < out.length; j++) { out[j] ^= u[j]; }
+        }
+        return out;
+    }
+
+    private static String hashPassword(String password) throws Exception {
+        byte[] salt = new byte[16]; new SecureRandom().nextBytes(salt);
+        byte[] digest = pbkdf2(password, salt, 120000);
+        return "pbkdf2$120000$" + hex(salt) + "$" + hex(digest);
+    }
+
+    private static String hex(byte[] value) {
+        StringBuilder out = new StringBuilder(value.length * 2);
+        for (byte b : value) { out.append(String.format("%02x", b & 0xff)); }
+        return out.toString();
     }
 
     private static void emit(SQLiteDatabase db, JSONObject ctx, String action, String id, JSONObject payload) throws JSONException {

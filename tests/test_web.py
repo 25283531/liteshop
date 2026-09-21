@@ -56,6 +56,17 @@ class WebTests(unittest.TestCase):
 
     def command(self, action, **payload):
         payload.setdefault("request_id", str(uuid4()))
+        if action in ("transact", "points", "update-member") and (action != "transact" or payload.get("kind") in ("RECHARGE", "CREDIT_TIMES")) and "password" not in payload:
+            if action == "transact":
+                payload["password"] = "1234"
+            elif action == "points":
+                payload["password"] = "1234"
+            elif "status" in payload:
+                payload["password"] = "1234"
+            if not getattr(self, "_test_password_ready", False):
+                status, response = self.request("POST", "/api/v1/commands/update-settings", {"request_id": "test-password-" + str(uuid4()), "local_password": "1234"})
+                self.assertEqual(status, 200, response)
+                self._test_password_ready = True
         status, response = self.request("POST", "/api/v1/commands/" + action, payload)
         self.assertEqual(status, 200, response)
         return response["data"]
@@ -102,6 +113,35 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.get("status")["pending_events"], before)
         self.assertEqual(self.get("members/" + member["id"])["cards"][0]["remaining_times"], 9)
 
+    def test_count_card_refund_restores_times_and_cannot_repeat(self):
+        member, card = self.member_card("COUNT")
+        self.command("transact", card_id=card["id"], kind="CREDIT_TIMES", times=2)
+        tx = self.command("transact", card_id=card["id"], kind="DEDUCT_TIMES", times=1)
+        self.assertEqual(self.get("members/" + member["id"])["cards"][0]["remaining_times"], 1)
+        refund = self.command("transact", card_id=card["id"], kind="REFUND", times=1, source_id=tx["id"])
+        self.assertEqual(refund["times"], 1)
+        self.assertEqual(self.get("members/" + member["id"])["cards"][0]["remaining_times"], 2)
+        status, response = self.request("POST", "/api/v1/commands/transact", {
+            "request_id": "repeat-count-refund", "card_id": card["id"], "kind": "REFUND", "times": 1, "source_id": tx["id"]
+        })
+        self.assertEqual(status, 400)
+        self.assertEqual(response["error"]["code"], "REFUND_EXCEEDED")
+
+    def test_protected_operations_require_local_password_when_configured(self):
+        self.command("update-settings", local_password="1234")
+        member, card = self.member_card("COUNT")
+        status, response = self.request("POST", "/api/v1/commands/transact", {
+            "request_id": "protected-credit", "card_id": card["id"], "kind": "CREDIT_TIMES", "times": 5, "password": "bad"
+        })
+        self.assertEqual(status, 400)
+        self.assertEqual(response["error"]["code"], "PASSWORD_INVALID")
+        self.command("transact", card_id=card["id"], kind="CREDIT_TIMES", times=5, password="1234")
+        status, response = self.request("POST", "/api/v1/commands/update-member", {
+            "request_id": "protected-status", "member_id": member["id"], "version": 1, "status": 0, "password": "bad"
+        })
+        self.assertEqual(status, 400)
+        self.assertEqual(response["error"]["code"], "PASSWORD_INVALID")
+
     def test_auth_origin_static_and_miniapp_boundary(self):
         self.assertEqual(self.request("GET", "/api/v1/members", auth=False)[0], 401)
         self.assertEqual(self.request("GET", "/api/v1/status", extra={"Origin": "https://evil.example"})[0], 403)
@@ -130,7 +170,8 @@ class WebTests(unittest.TestCase):
 
     def test_parallel_retries_write_once(self):
         member, card = self.member_card()
-        payload = dict(request_id="parallel", card_id=card["id"], kind="RECHARGE", amount=500)
+        self.command("update-settings", local_password="1234")
+        payload = dict(request_id="parallel", card_id=card["id"], kind="RECHARGE", amount=500, password="1234")
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
             results = list(pool.map(lambda _: self.request("POST", "/api/v1/commands/transact", payload), range(5)))
         self.assertTrue(all(status == 200 for status, _ in results))

@@ -19,7 +19,7 @@ COMMANDS = {"create-member": "create_member", "update-member": "update_member",
             "transact": "transact", "points": "change_points",
             "update-settings": "update_settings", "delete-member": "delete_member"}
 INTEGER_FIELDS = {"version", "amount", "times", "points", "expire_at", "status"}
-NULLABLE = {"phone", "expire_at", "source_id", "inviter_name", "inviter_member_id", "name", "settings", "local_password"}
+NULLABLE = {"phone", "expire_at", "source_id", "inviter_name", "inviter_member_id", "name", "settings", "local_password", "password"}
 
 
 class LocalServer(ThreadingHTTPServer):
