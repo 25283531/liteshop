@@ -213,6 +213,23 @@ class CloudTests(unittest.TestCase):
         status, response = self.request("GET", "/api/v1/account/members?shop_id=other", auth=False, extra_headers=auth)
         self.assertEqual(status, 403, response)
 
+    def test_admin_integration_settings_are_stored_and_secrets_redacted(self):
+        headers = {"Authorization": "Bearer " + self.admin_token}
+        status, response = self.request("PUT", "/api/v1/admin/settings", {
+            "smtp_host": "smtp.example.com", "smtp_port": "465", "smtp_username": "mailer@example.com",
+            "smtp_password": "secret", "smtp_from": "mailer@example.com", "smtp_ssl": "1",
+            "miniapp_app_id": "wx-app", "miniapp_app_secret": "mini-secret", "wechat_app_id": "gh-app",
+            "wechat_app_secret": "wechat-secret", "wechat_token": "verify-token"
+        }, auth=False, extra_headers=headers)
+        self.assertEqual(status, 200, response)
+        self.assertNotIn("mini-secret", json.dumps(response))
+        self.assertNotIn("verify-token", json.dumps(response))
+        status, response = self.request("GET", "/api/v1/admin/summary", auth=False, extra_headers=headers)
+        self.assertEqual(status, 200, response)
+        self.assertTrue(response["data"]["settings"]["smtp_password_configured"])
+        self.assertTrue(response["data"]["settings"]["wechat_token_configured"])
+        self.assertNotIn("mini-secret", json.dumps(response))
+
 
 if __name__ == "__main__":
     unittest.main()

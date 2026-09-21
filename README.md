@@ -161,13 +161,4 @@ Android 终端是独立客户端，数据保存在机顶盒 SQLite。云端地�
 
 可申请小程序通知、查询、预约、公众号通知和公众号群发。公众号群发任务按店铺创建，只统计并发送到该店铺的关注者；运营者仍需配置公众号凭据并审核后执行实际发送。共用的小程序/公众号必须在服务端通过会员与店铺关系进行隔离，会员只能看到自己注册过会员的店铺。
 
-邮箱注册需要配置以下 Docker 环境变量（未配置时注册会返回邮件发送失败）：
-
-| 变量 | 示例 | 说明 |
-| --- | --- | --- |
-| `LITESHOP_SMTP_HOST` | `smtp.example.com` | SMTP 服务器 |
-| `LITESHOP_SMTP_PORT` | `587` | SMTP 端口，默认 587 |
-| `LITESHOP_SMTP_USERNAME` | `noreply@example.com` | SMTP 用户名 |
-| `LITESHOP_SMTP_PASSWORD` | `授权码` | SMTP 密码或授权码 |
-| `LITESHOP_SMTP_FROM` | `noreply@example.com` | 邮件发件人 |
-| `LITESHOP_SMTP_SSL` | `0` 或 `1` | `1` 使用 SSL 直连，`0` 使用 STARTTLS |
+邮箱注册、SMTP、小程序和公众号配置均在根路径管理台的“云端设置”页面中完成。配置值保存在云端 SQLite 数据库，不需要写入 Docker 环境变量；密码、AppSecret 和 Token 只显示配置状态，不会回显。`LITESHOP_TERMINAL_TOKEN`、`LITESHOP_MINIAPP_TOKEN` 和 `LITESHOP_ADMIN_TOKEN` 仍仅用于接口鉴权。

@@ -106,28 +106,30 @@ def password_matches(password, encoded):
 
 
 class RegistrationMailer:
-    def __init__(self):
-        self.host = os.environ.get("LITESHOP_SMTP_HOST", "")
-        self.port = int(os.environ.get("LITESHOP_SMTP_PORT", "587"))
-        self.username = os.environ.get("LITESHOP_SMTP_USERNAME", "")
-        self.password = os.environ.get("LITESHOP_SMTP_PASSWORD", "")
-        self.sender = os.environ.get("LITESHOP_SMTP_FROM", self.username)
-        self.ssl = os.environ.get("LITESHOP_SMTP_SSL", "0") == "1"
+    def __init__(self, store):
+        self.store = store
 
     def send_registration(self, email, username):
-        if not self.host or not self.sender:
+        settings = self.store.integration_settings()
+        host = settings.get("smtp_host", "")
+        port = int(settings.get("smtp_port", "587") or 587)
+        smtp_username = settings.get("smtp_username", "")
+        smtp_password = settings.get("smtp_password", "")
+        sender = settings.get("smtp_from", smtp_username)
+        ssl = settings.get("smtp_ssl", "0") == "1"
+        if not host or not sender:
             raise RuntimeError("SMTP is not configured")
         message = EmailMessage()
         message["Subject"] = "LiteShop 注册成功"
-        message["From"] = self.sender
+        message["From"] = sender
         message["To"] = email
         message.set_content("您好，{}：\n\n您的 LiteShop 云端账号已注册成功。\n注册用户名：{}\n\n请妥善保管账号信息。".format(username, username))
-        client = smtplib.SMTP_SSL(self.host, self.port, timeout=15) if self.ssl else smtplib.SMTP(self.host, self.port, timeout=15)
+        client = smtplib.SMTP_SSL(host, port, timeout=15) if ssl else smtplib.SMTP(host, port, timeout=15)
         try:
-            if not self.ssl:
+            if not ssl:
                 client.starttls()
-            if self.username:
-                client.login(self.username, self.password)
+            if smtp_username:
+                client.login(smtp_username, smtp_password)
             client.send_message(message)
         finally:
             client.quit()
@@ -272,21 +274,46 @@ class CloudStore:
                 "shops": self.conn.execute("SELECT COUNT(*) FROM cloud_shop").fetchone()[0],
             }
             terminals = [dict(r) for r in self.conn.execute("SELECT device_id,shop_id,name,serial_no,status,last_seen FROM terminal_registry ORDER BY last_seen DESC").fetchall()]
-            settings = {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
+            settings = self.public_settings()
             return {"counts": counts, "shops": self.shops(), "terminals": terminals, "settings": settings}
+
+    INTEGRATION_KEYS = {
+        "smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_from", "smtp_ssl",
+        "miniapp_app_id", "miniapp_app_secret", "miniapp_message_template_id",
+        "wechat_app_id", "wechat_app_secret", "wechat_token", "wechat_message_template_id",
+    }
+
+    def integration_settings(self):
+        with self.lock:
+            return {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings WHERE key IN ({})".format(",".join("?" * len(self.INTEGRATION_KEYS))), tuple(self.INTEGRATION_KEYS)).fetchall()}
+
+    def public_settings(self):
+        with self.lock:
+            values = {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
+        result = {}
+        for key, value in values.items():
+            if key in {"smtp_password", "miniapp_app_secret", "wechat_app_secret", "wechat_token"}:
+                result[key + "_configured"] = bool(value)
+            else:
+                result[key] = value
+        return result
 
     def update_settings(self, values):
         if not isinstance(values, dict):
             raise ValueError("settings must be an object")
-        allowed = {"display_name", "notice"}
+        allowed = {"display_name", "notice"} | self.INTEGRATION_KEYS
         if any(key not in allowed for key in values):
             raise ValueError("unsupported setting")
         with self.lock, self.conn:
             for key, value in values.items():
-                if not isinstance(value, str) or len(value) > 200:
+                if not isinstance(value, str) or len(value) > 500:
                     raise ValueError("setting values must be strings of at most 200 characters")
+                if key == "smtp_port" and value and (not value.isdigit() or not 1 <= int(value) <= 65535):
+                    raise ValueError("SMTP 端口无效")
+                if key == "smtp_ssl" and value not in {"0", "1"}:
+                    raise ValueError("SMTP SSL 只能为 0 或 1")
                 self.conn.execute("INSERT INTO cloud_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (key, value, stamp()))
-            return {r[0]: r[1] for r in self.conn.execute("SELECT key,value FROM cloud_settings ORDER BY key").fetchall()}
+            return self.public_settings()
 
     def register_user(self, email, username, password):
         email = email.strip().lower() if isinstance(email, str) else ""
@@ -616,7 +643,7 @@ class CloudServer(ThreadingHTTPServer):
     daemon_threads = True
     def __init__(self, address, db, terminal_token, miniapp_token, admin_token=None):
         self.store = CloudStore(db)
-        self.mailer = RegistrationMailer()
+        self.mailer = RegistrationMailer(self.store)
         self.tokens = {"terminal": terminal_token, "miniapp": miniapp_token, "admin": admin_token or miniapp_token}
         super().__init__(address, Handler)
 
