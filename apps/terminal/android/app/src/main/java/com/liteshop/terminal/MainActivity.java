@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
+import android.provider.DocumentsContract;
+import android.database.Cursor;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -164,6 +166,7 @@ public class MainActivity extends Activity {
         }
         if (screensaverItems == null || screensaverItems.length() == 0) { return; }
         screensaver = new FrameLayout(this); screensaver.setBackgroundColor(Color.BLACK);
+        screensaver.setKeepScreenOn(true);
         screensaverImage = new ImageView(this); screensaverImage.setBackgroundColor(Color.BLACK); screensaverImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
         screensaverVideo = new VideoView(this); screensaverVideo.setBackgroundColor(Color.BLACK);
         screensaverVideo.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() { @Override public void onCompletion(android.media.MediaPlayer mp) { showNextScreensaverItem(); } });
@@ -171,6 +174,7 @@ public class MainActivity extends Activity {
         root.addView(screensaver, new FrameLayout.LayoutParams(-1, -1));
         screensaverShown = true; screensaverIndex = 0;
         getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN, android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        if (Build.VERSION.SDK_INT >= 19) { getWindow().getDecorView().setSystemUiVisibility(5894); }
         showNextScreensaverItem();
     }
 
@@ -209,6 +213,7 @@ public class MainActivity extends Activity {
         if (screensaverVideo != null) { try { screensaverVideo.stopPlayback(); } catch (Exception ignored) {} }
         if (screensaver != null) { root.removeView(screensaver); screensaver = null; }
         getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
     }
 
     private void promptScreensaverPassword() {
@@ -270,6 +275,11 @@ public class MainActivity extends Activity {
     }
 
     private void pickScreensaverMedia() {
+        if (Build.VERSION.SDK_INT >= 21) {
+            Intent folder = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            folder.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+            try { startActivityForResult(folder, PICK_SCREENSAVER_MEDIA); return; } catch (Exception ignored) { }
+        }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
@@ -288,8 +298,13 @@ public class MainActivity extends Activity {
         if (requestCode != PICK_SCREENSAVER_MEDIA || resultCode != RESULT_OK || data == null) { return; }
         org.json.JSONArray selected = new org.json.JSONArray();
         try {
+            if (Build.VERSION.SDK_INT >= 21 && data.getData() != null && DocumentsContract.isTreeUri(data.getData())) {
+                Uri tree = data.getData();
+                try { getContentResolver().takePersistableUriPermission(tree, data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+                collectTreeMedia(tree, DocumentsContract.getTreeDocumentId(tree), selected, 0);
+            }
             if (data.getClipData() != null) { for (int i = 0; i < data.getClipData().getItemCount(); i++) { addPickedUri(selected, data.getClipData().getItemAt(i).getUri(), data.getFlags()); } }
-            else if (data.getData() != null) { addPickedUri(selected, data.getData(), data.getFlags()); }
+            else if (data.getData() != null && !(Build.VERSION.SDK_INT >= 21 && DocumentsContract.isTreeUri(data.getData()))) { addPickedUri(selected, data.getData(), data.getFlags()); }
         } catch (Exception ignored) { }
         if (selected.length() == 0) { return; }
         if (web != null) {
@@ -303,6 +318,27 @@ public class MainActivity extends Activity {
         try { getContentResolver().takePersistableUriPermission(uri, flags & Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
         String mime = getContentResolver().getType(uri); if (mime == null) { mime = ""; }
         if (mime.startsWith("image/") || mime.startsWith("video/") || mime.length() == 0) { selected.put(new JSONObject().put("uri", text).put("mime", mime)); }
+    }
+
+    /** Enumerate only local image/video descendants of a user-selected Android folder. */
+    private void collectTreeMedia(Uri treeUri, String parentDocumentId, org.json.JSONArray selected, int depth) {
+        if (Build.VERSION.SDK_INT < 21 || depth > 8 || selected.length() >= 100) { return; }
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(children, new String[] {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, DocumentsContract.Document.COLUMN_DISPLAY_NAME + " COLLATE NOCASE");
+            if (cursor == null) { return; }
+            int idColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID), mimeColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+            while (cursor.moveToNext() && selected.length() < 100) {
+                String documentId = cursor.getString(idColumn), mime = mimeColumn >= 0 ? cursor.getString(mimeColumn) : "";
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    collectTreeMedia(treeUri, documentId, selected, depth + 1);
+                } else if (mime != null && (mime.startsWith("image/") || mime.startsWith("video/"))) {
+                    selected.put(new JSONObject().put("uri", DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId).toString()).put("mime", mime));
+                }
+            }
+        } catch (Exception ignored) { }
+        finally { if (cursor != null) { cursor.close(); } }
     }
 
     private void refreshCloudAccount() {
