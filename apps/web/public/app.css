@@ -5,3 +5,4 @@
 .media-picker{display:flex;gap:6px;align-items:center}.media-picker input{flex:1;min-width:0}.media-picker button{white-space:nowrap;padding-left:10px;padding-right:10px}
 .cloud-metric .metric-line{display:flex;align-items:center;justify-content:space-between;gap:8px}.cloud-metric .metric-line small{white-space:nowrap}
 .dialog label.checkbox-row{display:flex;align-items:center;gap:8px;line-height:1.4}.dialog label.checkbox-row input[type=checkbox]{width:20px;flex:0 0 20px;margin:0}
+.media-list{max-height:180px;overflow:auto;border:1px solid #dbe5e7;border-radius:6px;padding:6px;margin:6px 0}.media-item{display:flex;align-items:center;gap:8px;padding:5px 4px;border-bottom:1px solid #edf1f2;font-size:12px}.media-item:last-child{border-bottom:0}.media-item span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.media-item button{min-height:30px;padding:4px 8px;font-size:12px}

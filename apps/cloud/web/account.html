@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiteShop 云端账户</title><link rel="stylesheet" href="/account/app.css"></head>
 <body><header><div><h1>LiteShop 云端服务</h1><p id="status">正在加载账户…</p></div><a href="/">返回登录</a></header>
-<main><section id="dashboard" hidden>
+<main><p id="page-message" class="inline-message" role="status" aria-live="polite"></p><section id="dashboard" hidden>
   <div class="panel"><h2 id="welcome"></h2><p class="muted">登录后默认显示所有已绑定门店的经营数据。</p></div>
   <section class="metrics" id="metrics"></section>
-  <div class="panel"><h2>绑定终端</h2><form id="bind"><label>终端 16 位序列号<input id="serial" pattern="[A-Za-z0-9]{16}" maxlength="16" placeholder="终端设置页显示的序列号" required></label><button>发送绑定请求</button></form><p class="muted">请求发送后，请在对应安卓机顶盒上点击“同意绑定”。每小时和每天的请求次数由管理员设置。</p><p id="binding-status" class="notice"></p></div>
-  <div class="grid"><section class="panel"><h2>我的门店和终端</h2><div id="shops"></div><div id="terminals"></div></section><section class="panel"><h2>增值服务</h2><p class="muted">申请后由运营者配置微信服务凭据并开通。</p><div id="services"></div></section></div>
-  <section class="panel"><h2>会员数据</h2><select id="shop-select"><option value="">全部已绑定门店</option></select><button id="load-members">查询</button><div id="members"></div></section>
-  <section class="panel"><h2>公众号群发</h2><form id="campaign"><select id="campaign-shop" required></select><select id="campaign-channel"><option value="WECHAT_BROADCAST">公众号群发</option><option value="WECHAT_NOTICE">公众号通知</option></select><textarea id="campaign-content" maxlength="2000" placeholder="消息内容" required></textarea><button>开始群发</button></form><p class="muted">消息只会发送到所选店铺的关注者，实际发送需运营者完成公众号配置。</p></section>
+  <div class="panel"><h2>绑定终端</h2><p>终端首次使用时，在安卓机顶盒的“登录/注册云端”中输入本账户用户名或邮箱和密码，终端会使用页面显示的 16 位序列号自动完成绑定。绑定后，本地数据变化会自动同步，网络异常时保留待同步数据。</p><p id="binding-status" class="notice"></p></div>
+  <div class="grid"><section class="panel"><h2>我的门店和终端</h2><div id="shops"></div><div id="terminals"></div></section><section class="panel"><h2>增值服务</h2><p class="muted">申请后由运营者配置微信服务凭据并开通。</p><p id="services-message" class="inline-message" role="status" aria-live="polite"></p><div id="services"></div></section></div>
+  <section class="panel"><h2>会员数据</h2><select id="shop-select"><option value="">全部已绑定门店</option></select><button id="load-members">查询</button><p id="members-message" class="inline-message" role="status" aria-live="polite"></p><div id="members"></div></section>
+  <section class="panel"><h2>公众号群发</h2><form id="campaign"><select id="campaign-shop" required></select><select id="campaign-channel"><option value="WECHAT_BROADCAST">公众号群发</option><option value="WECHAT_NOTICE">公众号通知</option></select><textarea id="campaign-content" maxlength="2000" placeholder="消息内容" required></textarea><button>开始群发</button></form><p id="campaign-message" class="inline-message" role="status" aria-live="polite"></p><p class="muted">消息只会发送到所选店铺的关注者，实际发送需运营者完成公众号配置。</p></section>
 </section><section id="logged-out" class="panel"><h2>请先登录</h2><p>云端账户页面仅显示已登录用户的数据，请返回登录页面完成登录。</p><a class="button" href="/">返回登录</a></section></main><script src="/account/app.js"></script></body></html>

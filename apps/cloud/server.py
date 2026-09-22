@@ -360,6 +360,37 @@ class CloudStore:
             self.conn.execute("INSERT INTO user_session VALUES (?,?,?)", (hashlib.sha256(raw.encode()).hexdigest(), row[0], stamp() + 30 * 24 * 3600 * 1000))
             return {"token": raw, "user_id": row[0], "email": row[1], "username": row[2]}
 
+    def login_user_identity(self, identity, password):
+        identity = identity.strip() if isinstance(identity, str) else ""
+        with self.lock, self.conn:
+            row = self.conn.execute("SELECT user_id,email,username,password_hash,status FROM cloud_user WHERE email=? OR username=?", (identity.lower(), identity)).fetchone()
+            if not row or row[4] != "ACTIVE" or not password_matches(password or "", row[3]):
+                raise ValueError("用户名、邮箱或密码错误")
+            raw = secrets.token_urlsafe(32)
+            self.conn.execute("INSERT INTO user_session VALUES (?,?,?)", (hashlib.sha256(raw.encode()).hexdigest(), row[0], stamp() + 30 * 24 * 3600 * 1000))
+            return {"token": raw, "user_id": row[0], "email": row[1], "username": row[2]}
+
+    def bind_terminal_credentials(self, identity, password, serial, device_id, shop_id):
+        user = self.login_user_identity(identity, password)
+        if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial.strip().upper()):
+            raise ValueError("终端序列号无效")
+        if not isinstance(device_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", device_id):
+            raise ValueError("终端设备标识无效")
+        if not isinstance(shop_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", shop_id):
+            raise ValueError("门店标识无效")
+        serial = serial.strip().upper()
+        with self.lock, self.conn:
+            existing = self.conn.execute("SELECT device_id,shop_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
+            if existing and existing[0] != device_id:
+                raise ValueError("该序列号已绑定其他终端")
+            other = self.conn.execute("SELECT user_id FROM user_terminal WHERE device_id=? AND user_id<>?", (device_id, user["user_id"])).fetchone()
+            if other:
+                raise ValueError("该终端已绑定其他云端账户")
+            now = stamp()
+            self.conn.execute("INSERT INTO terminal_registry(device_id,shop_id,serial_no,last_seen) VALUES (?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET shop_id=excluded.shop_id,serial_no=excluded.serial_no,last_seen=excluded.last_seen", (device_id, shop_id, serial, now))
+            self.conn.execute("INSERT OR IGNORE INTO user_terminal VALUES (?,?,?,?)", (user["user_id"], device_id, shop_id, now))
+            return {"username": user["username"], "email": user["email"], "user_id": user["user_id"], "serial_no": serial}
+
     def cancel_registration(self, user_id):
         with self.lock, self.conn:
             self.conn.execute("DELETE FROM cloud_user WHERE user_id=?", (user_id,))
@@ -692,7 +723,7 @@ class Handler(BaseHTTPRequestHandler):
                 password = values.get("password") if isinstance(values.get("password"), str) else ""
                 if not self.server.admin_username or not self.server.admin_password or not hmac.compare_digest(username, self.server.admin_username) or not hmac.compare_digest(password, self.server.admin_password):
                     raise ValueError("管理员账户名或密码错误")
-                self.respond(200, {"ok": True, "data": {"requires_token": True}, "message": "账户验证成功，请继续输入管理令牌"})
+                self.respond(200, {"ok": True, "data": {"requires_token": False, "token": self.server.tokens["admin"]}, "message": "管理员登录成功"})
             except ValueError as exc:
                 self.respond(401, {"ok": False, "error": {"code": "INVALID_ADMIN_CREDENTIALS", "message": str(exc)}})
             return
@@ -714,9 +745,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/auth/login":
             try:
                 values = self.body()
-                self.respond(200, {"ok": True, "data": self.server.store.login_user(values.get("email"), values.get("password"))})
+                self.respond(200, {"ok": True, "data": self.server.store.login_user_identity(values.get("identity", values.get("email")), values.get("password"))})
             except ValueError as exc:
                 self.respond(401, {"ok": False, "error": {"code": "INVALID_CREDENTIALS", "message": str(exc)}})
+            return
+        if path == "/api/v1/terminal/auth/login":
+            try:
+                values = self.body()
+                result = self.server.store.bind_terminal_credentials(values.get("identity"), values.get("password"), values.get("serial_no"), values.get("device_id"), values.get("shop_id"))
+                result["terminal_token"] = self.server.tokens["terminal"]
+                self.respond(200, {"ok": True, "data": result, "message": "终端已绑定云端账户"})
+            except ValueError as exc:
+                self.respond(401, {"ok": False, "error": {"code": "TERMINAL_LOGIN_FAILED", "message": str(exc)}})
             return
         if path == "/api/v1/account/terminals":
             user = self.user_auth()

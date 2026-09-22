@@ -234,19 +234,24 @@
                 var saver = (data.settings && data.settings.screensaver) || {};
                 el("screensaver-enabled").checked = !!saver.enabled;
                 el("screensaver-timeout").value = saver.timeout_minutes || 10;
-                el("screensaver-url").value = saver.media_url || "";
-                el("screensaver-media-status").textContent = saver.media_url ? "已选择安卓本地文件：" + saver.media_url : "尚未选择本地屏保文件";
-                el("screensaver-type").value = saver.media_type || "auto";
+                state.screensaverItems = [];
+                if (saver.media_items && Array.isArray(saver.media_items)) { state.screensaverItems = saver.media_items.slice(0, 100); }
+                else if (saver.media_url) { state.screensaverItems = [{uri: saver.media_url, mime: saver.media_type || ""}]; }
+                renderScreensaverMedia();
                 el("screensaver-password").checked = !!saver.require_password;
                 el("settings-error").textContent = ""; el("settings-modal").hidden = false; el("shop-setting-name").focus();
             });
         });
     }
-    window.LiteShopMediaPicked = function (uri, mime) {
-        if (!uri || (String(uri).indexOf("content://") !== 0 && String(uri).indexOf("file://") !== 0)) { return; }
-        el("screensaver-url").value = uri;
-        el("screensaver-media-status").textContent = "已选择安卓本地文件：" + uri;
-        el("screensaver-type").value = String(mime || "").indexOf("video/") === 0 ? "video" : "image";
+    function renderScreensaverMedia() {
+        var items = state.screensaverItems || [], list = el("screensaver-media-list");
+        list.innerHTML = items.length ? items.map(function (item, index) { return '<div class="media-item"><span>' + (index + 1) + '. ' + esc(item.mime || "本地媒体") + ' · ' + esc(item.uri) + '</span><button type="button" class="quiet remove-media" data-index="' + index + '">删除</button></div>'; }).join("") : '<span class="muted">尚未选择本地屏保文件</span>';
+        el("screensaver-media-status").textContent = items.length ? "已选择 " + items.length + " 个本地媒体文件，将按顺序循环全屏播放" : "尚未选择本地屏保文件";
+    }
+    window.LiteShopMediaPicked = function (picked) {
+        var values = Array.isArray(picked) ? picked : (picked ? [{uri: picked.uri || picked, mime: picked.mime || ""}] : []), existing = state.screensaverItems || [];
+        values.forEach(function (item) { var uri = String(item.uri || ""); if ((uri.indexOf("content://") === 0 || uri.indexOf("file://") === 0) && existing.length < 100 && !existing.some(function (x) { return x.uri === uri; })) { existing.push({uri: uri, mime: String(item.mime || "")}); } });
+        state.screensaverItems = existing; renderScreensaverMedia();
     };
     el("settings").onclick = openSettings;
     el("settings-cancel").onclick = function () { el("settings-modal").hidden = true; };
@@ -254,15 +259,16 @@
         if (bridge && bridge.pickScreensaverMedia) { bridge.pickScreensaverMedia(); }
         else { el("settings-error").textContent = "请在安卓机顶盒端使用系统文件管理器选择本地图片或视频"; }
     };
-    el("clear-screensaver-media").onclick = function () { el("screensaver-url").value = ""; el("screensaver-media-status").textContent = "尚未选择本地屏保文件"; el("screensaver-type").value = "auto"; };
+    el("clear-screensaver-media").onclick = function () { state.screensaverItems = []; renderScreensaverMedia(); };
+    el("screensaver-media-list").onclick = function (event) { var button = event.target.closest ? event.target.closest(".remove-media") : null; if (button) { state.screensaverItems.splice(Number(button.getAttribute("data-index")), 1); renderScreensaverMedia(); } };
     el("settings-form").onsubmit = function (event) {
         event.preventDefault();
         var types = [], cards = el("card-type-settings").querySelectorAll(".card-type-setting");
         for (var i = 0; i < cards.length; i++) { var row = cards[i], code = row.getAttribute("data-card-code"), number = function (field, fallback) { var n = Number(row.querySelector('[data-card-field="' + field + '"]').value); return isFinite(n) ? n : fallback; }; types.push({category_code: code, name: row.querySelector('[data-card-field="name"]').value, enabled: row.querySelector('[data-card-field="enabled"]').checked, gift_percent: number("gift_percent", 0), discount_percent: number("discount_percent", 100), points_rate: number("points_rate", 0)}); }
         var timeout = Number(el("screensaver-timeout").value); if (!isFinite(timeout) || timeout < 1 || timeout > 1440) { el("settings-error").textContent = "屏保时间必须为 1-1440 分钟"; return; }
-        var mediaUrl = el("screensaver-url").value.trim();
-        if (mediaUrl && mediaUrl.indexOf("content://") !== 0 && mediaUrl.indexOf("file://") !== 0) { el("settings-error").textContent = "屏保只能使用安卓机顶盒本地存储的图片或视频"; return; }
-        var settings = {card_types: types, screensaver: {enabled: el("screensaver-enabled").checked, timeout_minutes: Math.round(timeout), media_url: mediaUrl, media_type: el("screensaver-type").value, require_password: el("screensaver-password").checked}};
+        var mediaItems = (state.screensaverItems || []).slice(0, 100);
+        if (mediaItems.some(function (item) { return !item.uri || (item.uri.indexOf("content://") !== 0 && item.uri.indexOf("file://") !== 0) || (item.mime && item.mime.indexOf("image/") !== 0 && item.mime.indexOf("video/") !== 0); })) { el("settings-error").textContent = "屏保只能使用安卓机顶盒本地存储的图片或视频"; return; }
+        var settings = {card_types: types, screensaver: {enabled: el("screensaver-enabled").checked, timeout_minutes: Math.round(timeout), media_items: mediaItems}};
         api("POST", "commands/update-settings", {request_id: "settings-" + new Date().getTime(), name: el("shop-setting-name").value, settings: settings, local_password: el("local-setting-password").value || null}, function (error) {
             if (error) { el("settings-error").textContent = error; return; }
             el("settings-modal").hidden = true; el("local-setting-password").value = ""; notice("设置已保存", false); connect();

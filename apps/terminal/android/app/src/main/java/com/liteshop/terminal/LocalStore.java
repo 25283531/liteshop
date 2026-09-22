@@ -281,6 +281,16 @@ public final class LocalStore extends SQLiteOpenHelper {
                 if (saver != null) {
                     String media = saver.optString("media_url", "");
                     if (media.length() != 0 && !(media.startsWith("content://") || media.startsWith("file://"))) { reject("INVALID_INPUT", "屏保只能使用安卓机顶盒本地存储资源"); }
+                    if (saver.has("media_items") && !saver.isNull("media_items")) {
+                        JSONArray items = saver.optJSONArray("media_items");
+                        if (items == null || items.length() > 100) { reject("INVALID_INPUT", "屏保媒体数量不能超过 100 个"); }
+                        for (int i = 0; i < items.length(); i++) {
+                            JSONObject item = items.optJSONObject(i);
+                            String uri = item == null ? "" : item.optString("uri", "");
+                            String mime = item == null ? "" : item.optString("mime", "");
+                            if (uri.length() == 0 || uri.length() > 2048 || !(uri.startsWith("content://") || uri.startsWith("file://")) || !(mime.length() == 0 || mime.startsWith("image/") || mime.startsWith("video/"))) { reject("INVALID_INPUT", "屏保媒体必须是安卓本地图片或视频"); }
+                        }
+                    }
                 }
                 values.put("settings_json", settings.toString());
             }
