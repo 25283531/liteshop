@@ -27,8 +27,10 @@ import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -47,6 +49,7 @@ public class MainActivity extends Activity {
     private FrameLayout root;
     private WebView screensaver;
     private boolean screensaverShown;
+    private volatile String bindingPromptRequest = "";
     private static final int PICK_SCREENSAVER_MEDIA = 4107;
     private long lastActivityAt;
     private final Handler idleHandler = new Handler();
@@ -116,7 +119,7 @@ public class MainActivity extends Activity {
         lastActivityAt = System.currentTimeMillis();
         idleHandler.postDelayed(idleCheck, 10000);
         syncWorker.scheduleWithFixedDelay(new Runnable() {
-            @Override public void run() { uploadCloud(); refreshCloudAccount(); }
+            @Override public void run() { uploadCloud(); refreshCloudAccount(); pollBindingRequests(); }
         }, 0, 30, TimeUnit.SECONDS);
     }
 
@@ -250,6 +253,69 @@ public class MainActivity extends Activity {
             JSONObject result = new JSONObject(output.toString("UTF-8")).getJSONObject("data");
             prefs.edit().putString("cloud_username", result.optString("username", "")).apply();
         } catch (Exception ignored) { }
+    }
+
+    private void pollBindingRequests() {
+        HttpURLConnection connection = null;
+        try {
+            JSONObject local = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data");
+            String serial = local.optString("serial_no", "").trim().toUpperCase();
+            String deviceId = local.optString("device_id", "");
+            String shopId = local.optString("id", "");
+            if (serial.length() != 16 || deviceId.length() == 0 || shopId.length() == 0) { return; }
+            String query = "serial_no=" + URLEncoder.encode(serial, "UTF-8") + "&device_id=" + URLEncoder.encode(deviceId, "UTF-8") + "&shop_id=" + URLEncoder.encode(shopId, "UTF-8");
+            connection = (HttpURLConnection) new URL(CLOUD_ENDPOINT + "/api/v1/terminal/binding-requests?" + query).openConnection();
+            connection.setConnectTimeout(5000); connection.setReadTimeout(8000); connection.setRequestMethod("GET");
+            if (connection.getResponseCode() != 200) { return; }
+            JSONObject result = new JSONObject(readConnection(connection));
+            org.json.JSONArray requests = result.optJSONArray("data");
+            if (requests == null || requests.length() == 0) { return; }
+            JSONObject request = requests.getJSONObject(0);
+            final String requestId = request.optString("request_id", "");
+            if (requestId.length() == 0 || requestId.equals(bindingPromptRequest)) { return; }
+            bindingPromptRequest = requestId;
+            final String username = request.optString("username", "云端用户");
+            runOnUiThread(new Runnable() { @Override public void run() { showBindingRequest(requestId, username); } });
+        } catch (Exception ignored) { }
+        finally { if (connection != null) { connection.disconnect(); } }
+    }
+
+    private String readConnection(HttpURLConnection connection) throws Exception {
+        InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try { byte[] buffer = new byte[2048]; int count; while ((count = input.read(buffer)) != -1 && output.size() <= 262144) { output.write(buffer, 0, count); } }
+        finally { input.close(); }
+        return output.toString("UTF-8");
+    }
+
+    private void showBindingRequest(final String requestId, String username) {
+        String serial = "";
+        try { serial = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data").optString("serial_no", ""); } catch (Exception ignored) { }
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("云端绑定请求")
+            .setMessage("账户“" + username + "”请求绑定此终端。\n序列号：" + serial + "\n是否同意？")
+            .setPositiveButton("同意绑定", null).setNegativeButton("拒绝", null).create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() { @Override public void onShow(DialogInterface ignored) {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { dialog.dismiss(); respondBinding(requestId, true); } });
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { dialog.dismiss(); respondBinding(requestId, false); } });
+        }});
+        dialog.show();
+    }
+
+    private void respondBinding(final String requestId, final boolean approve) {
+        try { syncWorker.execute(new Runnable() { @Override public void run() {
+            HttpURLConnection connection = null;
+            try {
+                JSONObject local = new JSONObject(store.handle("GET", "settings", null).body).getJSONObject("data");
+                JSONObject body = new JSONObject().put("request_id", requestId).put("serial_no", local.optString("serial_no", "")).put("device_id", local.optString("device_id", "")).put("shop_id", local.optString("id", "")).put("approve", approve);
+                byte[] bytes = body.toString().getBytes("UTF-8");
+                connection = (HttpURLConnection) new URL(CLOUD_ENDPOINT + "/api/v1/terminal/binding-requests/respond").openConnection();
+                connection.setConnectTimeout(5000); connection.setReadTimeout(8000); connection.setRequestMethod("POST"); connection.setDoOutput(true); connection.setRequestProperty("Content-Type", "application/json"); connection.setFixedLengthStreamingMode(bytes.length);
+                OutputStream output = connection.getOutputStream(); try { output.write(bytes); } finally { output.close(); }
+                if (connection.getResponseCode() != 200) { return; }
+                JSONObject result = new JSONObject(readConnection(connection)).getJSONObject("data");
+                if (approve) { String terminalToken = result.optString("terminal_token", ""); if (terminalToken.length() > 0) { prefs.edit().putString("cloud_token", terminalToken).apply(); } }
+            } catch (Exception ignored) { }
+            finally { bindingPromptRequest = ""; if (connection != null) { connection.disconnect(); } }
+        }}); } catch (java.util.concurrent.RejectedExecutionException ignored) { bindingPromptRequest = ""; }
     }
 
     private void showTerminalSerial() {

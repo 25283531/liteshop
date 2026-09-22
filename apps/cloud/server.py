@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS user_terminal (
   user_id TEXT NOT NULL REFERENCES cloud_user(user_id), device_id TEXT NOT NULL REFERENCES terminal_registry(device_id),
   shop_id TEXT NOT NULL, bound_at INTEGER NOT NULL, PRIMARY KEY(user_id, device_id)
 );
+CREATE TABLE IF NOT EXISTS binding_request (
+  request_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES cloud_user(user_id),
+  serial_no TEXT NOT NULL, device_id TEXT, shop_id TEXT, status TEXT NOT NULL DEFAULT 'PENDING',
+  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, responded_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_binding_request_serial ON binding_request(serial_no,status,created_at);
 CREATE TABLE IF NOT EXISTS service_subscription (
   user_id TEXT NOT NULL REFERENCES cloud_user(user_id), shop_id TEXT NOT NULL, service_code TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'REQUESTED', requested_at INTEGER NOT NULL, PRIMARY KEY(user_id, shop_id, service_code)
@@ -141,6 +147,15 @@ class CloudStore:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        for statement in (
+            "ALTER TABLE cloud_user ADD COLUMN balance_cents INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE cloud_user ADD COLUMN plan TEXT NOT NULL DEFAULT 'FREE'",
+            "ALTER TABLE cloud_user ADD COLUMN plan_expires_at INTEGER",
+        ):
+            try:
+                self.conn.execute(statement)
+            except sqlite3.OperationalError:
+                pass
         try:
             self.conn.execute("ALTER TABLE terminal_registry ADD COLUMN serial_no TEXT")
         except sqlite3.OperationalError:
@@ -275,13 +290,15 @@ class CloudStore:
             }
             terminals = [dict(r) for r in self.conn.execute("SELECT device_id,shop_id,name,serial_no,status,last_seen FROM terminal_registry ORDER BY last_seen DESC").fetchall()]
             settings = self.public_settings()
-            return {"counts": counts, "shops": self.shops(), "terminals": terminals, "settings": settings}
+            users = [dict(r) for r in self.conn.execute("SELECT user_id,email,username,status,balance_cents,plan,plan_expires_at,created_at FROM cloud_user ORDER BY created_at DESC").fetchall()]
+            return {"counts": counts, "shops": self.shops(), "terminals": terminals, "users": users, "settings": settings}
 
     INTEGRATION_KEYS = {
         "smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_from", "smtp_ssl",
         "miniapp_app_id", "miniapp_app_secret", "miniapp_message_template_id",
         "wechat_app_id", "wechat_app_secret", "wechat_token", "wechat_message_template_id",
     }
+    SERVICE_KEYS = {"binding_hour_limit", "binding_day_limit"}
 
     def integration_settings(self):
         with self.lock:
@@ -301,7 +318,7 @@ class CloudStore:
     def update_settings(self, values):
         if not isinstance(values, dict):
             raise ValueError("settings must be an object")
-        allowed = {"display_name", "notice"} | self.INTEGRATION_KEYS
+        allowed = {"display_name", "notice"} | self.INTEGRATION_KEYS | self.SERVICE_KEYS
         if any(key not in allowed for key in values):
             raise ValueError("unsupported setting")
         with self.lock, self.conn:
@@ -312,6 +329,8 @@ class CloudStore:
                     raise ValueError("SMTP 端口无效")
                 if key == "smtp_ssl" and value not in {"0", "1"}:
                     raise ValueError("SMTP SSL 只能为 0 或 1")
+                if key in self.SERVICE_KEYS and (not value.isdigit() or int(value) < 1 or int(value) > 100000):
+                    raise ValueError("绑定请求限制必须是 1-100000 的整数")
                 self.conn.execute("INSERT INTO cloud_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at", (key, value, stamp()))
             return self.public_settings()
 
@@ -327,7 +346,7 @@ class CloudStore:
         user_id = secrets.token_hex(16)
         with self.lock, self.conn:
             try:
-                self.conn.execute("INSERT INTO cloud_user VALUES (?,?,?,?,?,?)", (user_id, email, username, password_hash(password), "ACTIVE", stamp()))
+                self.conn.execute("INSERT INTO cloud_user(user_id,email,username,password_hash,status,created_at,balance_cents,plan,plan_expires_at) VALUES (?,?,?,?,?,?,?,?,?)", (user_id, email, username, password_hash(password), "ACTIVE", stamp(), 0, "FREE", None))
             except sqlite3.IntegrityError:
                 raise ValueError("邮箱或用户名已经注册")
         return {"user_id": user_id, "email": email, "username": username}
@@ -352,16 +371,98 @@ class CloudStore:
             row = self.conn.execute("SELECT u.user_id,u.email,u.username FROM user_session s JOIN cloud_user u ON u.user_id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.status='ACTIVE'", (hashlib.sha256(raw_token.encode()).hexdigest(), stamp())).fetchone()
             return dict(row) if row else None
 
-    def bind_terminal(self, user_id, serial):
+    def _binding_limits(self):
+        values = self.public_settings()
+        return int(values.get("binding_hour_limit", "5") or 5), int(values.get("binding_day_limit", "20") or 20)
+
+    def request_terminal_binding(self, user_id, serial):
         if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial.strip().upper()):
             raise ValueError("请输入终端显示的 16 位序列号")
         serial = serial.strip().upper()
         with self.lock, self.conn:
-            row = self.conn.execute("SELECT device_id,shop_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
-            if not row:
-                raise ValueError("未找到该序列号对应的在线终端，请先让终端同步一次")
-            self.conn.execute("INSERT OR IGNORE INTO user_terminal VALUES (?,?,?,?)", (user_id, row[0], row[1], stamp()))
-            return {"device_id": row[0], "shop_id": row[1], "serial_no": serial}
+            existing = self.conn.execute("SELECT 1 FROM user_terminal ut JOIN terminal_registry t ON t.device_id=ut.device_id WHERE ut.user_id=? AND t.serial_no=?", (user_id, serial)).fetchone()
+            if existing:
+                raise ValueError("该终端已经绑定")
+            # Terminals registered by the previous sync-only release already possess
+            # a trusted terminal identity; preserve their existing binding behavior
+            # during migration. Newly seen serials always require terminal approval.
+            registered = self.conn.execute("SELECT device_id,shop_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
+            if registered:
+                self.conn.execute("INSERT OR IGNORE INTO user_terminal VALUES (?,?,?,?)", (user_id, registered[0], registered[1], stamp()))
+                return {"device_id": registered[0], "shop_id": registered[1], "serial_no": serial, "status": "APPROVED", "legacy": True}
+            now = stamp()
+            pending = self.conn.execute("SELECT request_id FROM binding_request WHERE user_id=? AND serial_no=? AND status='PENDING' AND expires_at>?", (user_id, serial, now)).fetchone()
+            if pending:
+                return {"request_id": pending[0], "serial_no": serial, "status": "PENDING"}
+            hour_limit, day_limit = self._binding_limits()
+            hour = self.conn.execute("SELECT COUNT(*) FROM binding_request WHERE user_id=? AND created_at>=?", (user_id, now - 3600 * 1000)).fetchone()[0]
+            day = self.conn.execute("SELECT COUNT(*) FROM binding_request WHERE user_id=? AND created_at>=?", (user_id, now - 24 * 3600 * 1000)).fetchone()[0]
+            global_hour = self.conn.execute("SELECT COUNT(*) FROM binding_request WHERE created_at>=?", (now - 3600 * 1000,)).fetchone()[0]
+            global_day = self.conn.execute("SELECT COUNT(*) FROM binding_request WHERE created_at>=?", (now - 24 * 3600 * 1000,)).fetchone()[0]
+            if global_hour >= hour_limit:
+                raise ValueError("系统已达到每小时绑定请求上限，请稍后再试")
+            if global_day >= day_limit:
+                raise ValueError("系统已达到每日绑定请求上限，请明天再试")
+            if hour >= hour_limit:
+                raise ValueError("已达到每小时绑定请求上限，请稍后再试")
+            if day >= day_limit:
+                raise ValueError("已达到每日绑定请求上限，请明天再试")
+            request_id = secrets.token_urlsafe(24)
+            self.conn.execute("INSERT INTO binding_request(request_id,user_id,serial_no,status,created_at,expires_at) VALUES (?,?,?,?,?,?)", (request_id, user_id, serial, "PENDING", now, now + 10 * 60 * 1000))
+            return {"request_id": request_id, "serial_no": serial, "status": "PENDING", "expires_at": now + 10 * 60 * 1000}
+
+    def pending_bindings(self, serial, device_id=None, shop_id=None):
+        if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial.strip().upper()):
+            return []
+        serial = serial.strip().upper()
+        with self.lock:
+            now = stamp()
+            registered = self.conn.execute("SELECT device_id,shop_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
+            if registered and ((device_id and registered[0] != device_id) or (shop_id and registered[1] != shop_id)):
+                return []
+            self.conn.execute("UPDATE binding_request SET status='EXPIRED',responded_at=? WHERE serial_no=? AND status='PENDING' AND expires_at<=?", (now, serial, now))
+            rows = self.conn.execute("SELECT r.request_id,r.serial_no,r.created_at,r.expires_at,u.username FROM binding_request r JOIN cloud_user u ON u.user_id=r.user_id WHERE r.serial_no=? AND r.status='PENDING' ORDER BY r.created_at", (serial,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def respond_binding(self, request_id, serial, device_id, shop_id, approve):
+        serial = serial.strip().upper() if isinstance(serial, str) else ""
+        if not re.fullmatch(r"[A-Z0-9]{16}", serial) or not isinstance(request_id, str) or not request_id:
+            raise ValueError("绑定请求参数无效")
+        if not isinstance(device_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", device_id):
+            raise ValueError("终端设备标识无效")
+        if not isinstance(shop_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", shop_id):
+            raise ValueError("门店标识无效")
+        with self.lock, self.conn:
+            row = self.conn.execute("SELECT user_id,status,expires_at FROM binding_request WHERE request_id=? AND serial_no=?", (request_id, serial)).fetchone()
+            if not row or row[1] != "PENDING" or row[2] <= stamp():
+                raise ValueError("绑定请求已失效")
+            now = stamp()
+            status = "APPROVED" if approve else "REJECTED"
+            self.conn.execute("UPDATE binding_request SET status=?,device_id=?,shop_id=?,responded_at=? WHERE request_id=?", (status, device_id, shop_id, now, request_id))
+            if not approve:
+                return {"status": status}
+            serial_row = self.conn.execute("SELECT device_id FROM terminal_registry WHERE serial_no=?", (serial,)).fetchone()
+            if serial_row and serial_row[0] != device_id:
+                raise ValueError("该序列号已对应其他终端")
+            other_user = self.conn.execute("SELECT user_id FROM user_terminal WHERE device_id=? AND user_id<>?", (device_id, row[0])).fetchone()
+            if other_user:
+                raise ValueError("该终端已绑定其他云端账户")
+            self.conn.execute("INSERT INTO terminal_registry(device_id,shop_id,serial_no,last_seen) VALUES (?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET shop_id=excluded.shop_id,serial_no=excluded.serial_no,last_seen=excluded.last_seen", (device_id, shop_id, serial, now))
+            self.conn.execute("INSERT OR IGNORE INTO user_terminal VALUES (?,?,?,?)", (row[0], device_id, shop_id, now))
+            return {"status": status, "user_id": row[0], "serial_no": serial}
+
+    def update_user_billing(self, user_id, balance_cents, plan, plan_expires_at=None):
+        if not isinstance(user_id, str) or type(balance_cents) is not int or balance_cents < 0 or balance_cents > 10**12:
+            raise ValueError("余额无效")
+        if not isinstance(plan, str) or not re.fullmatch(r"[A-Z0-9_-]{1,32}", plan):
+            raise ValueError("套餐名称无效")
+        if plan_expires_at is not None and (type(plan_expires_at) is not int or plan_expires_at < 0 or plan_expires_at > 2**63 - 1):
+            raise ValueError("套餐到期时间无效")
+        with self.lock, self.conn:
+            row = self.conn.execute("SELECT user_id FROM cloud_user WHERE user_id=?", (user_id,)).fetchone()
+            if not row: raise ValueError("用户不存在")
+            self.conn.execute("UPDATE cloud_user SET balance_cents=?,plan=?,plan_expires_at=? WHERE user_id=?", (balance_cents, plan, plan_expires_at, user_id))
+            return dict(self.conn.execute("SELECT user_id,email,username,status,balance_cents,plan,plan_expires_at,created_at FROM cloud_user WHERE user_id=?", (user_id,)).fetchone())
 
     def terminal_account(self, serial):
         if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{16}", serial.strip().upper()):
@@ -376,7 +477,23 @@ class CloudStore:
             shops = [dict(r) for r in self.conn.execute("SELECT s.shop_id,s.name,COUNT(DISTINCT m.member_id) AS member_count,COUNT(DISTINCT c.card_id) AS card_count,COALESCE((SELECT COUNT(*) FROM cloud_event e WHERE e.shop_id=s.shop_id AND e.event_type='CARD_TRANSACTION'),0) AS transaction_count FROM user_terminal ut JOIN cloud_shop s ON s.shop_id=ut.shop_id LEFT JOIN member_projection m ON m.shop_id=ut.shop_id LEFT JOIN card_projection c ON c.shop_id=ut.shop_id WHERE ut.user_id=? GROUP BY s.shop_id", (user_id,)).fetchall()]
             terminals = [dict(r) for r in self.conn.execute("SELECT t.device_id,t.serial_no,t.shop_id,t.name,t.status,t.last_seen FROM user_terminal ut JOIN terminal_registry t ON t.device_id=ut.device_id WHERE ut.user_id=?", (user_id,)).fetchall()]
             services = [dict(r) for r in self.conn.execute("SELECT shop_id,service_code,status,requested_at FROM service_subscription WHERE user_id=? ORDER BY requested_at DESC", (user_id,)).fetchall()]
-            return {"shops": shops, "terminals": terminals, "services": services}
+            transactions = 0; consume_amount = 0; recharge_amount = 0; new_members = 0
+            cutoff = stamp() - 30 * 24 * 3600 * 1000
+            rows = self.conn.execute("SELECT event_type,payload,created_at FROM cloud_event WHERE shop_id IN (SELECT shop_id FROM user_terminal WHERE user_id=?)", (user_id,)).fetchall()
+            for row in rows:
+                payload = json.loads(row[1])
+                if row[0] == "MEMBER_CREATED":
+                    new_members += 1 if row[2] >= cutoff else 0
+                elif row[0] == "CARD_TRANSACTION":
+                    kind = payload.get("kind")
+                    if kind in ("CONSUME", "DEDUCT_TIMES", "RECHARGE", "CREDIT_TIMES"):
+                        transactions += 1
+                    amount_value = payload.get("amount", 0)
+                    amount = amount_value if type(amount_value) is int else 0
+                    if kind == "CONSUME": consume_amount += abs(amount)
+                    if kind == "RECHARGE": recharge_amount += abs(amount)
+            metrics = {"member_count": sum(int(s["member_count"]) for s in shops), "new_member_count": new_members, "transaction_count": transactions, "consume_amount": consume_amount, "recharge_amount": recharge_amount}
+            return {"shops": shops, "terminals": terminals, "services": services, "metrics": metrics}
 
     def user_members(self, user_id, shop_id=None):
         with self.lock:
@@ -548,6 +665,13 @@ class Handler(BaseHTTPRequestHandler):
             username = self.server.store.terminal_account(serial)
             self.respond(200, {"ok": True, "data": {"bound": bool(username), "username": username or ""}})
             return
+        if parsed.path == "/api/v1/terminal/binding-requests":
+            query = parse_qs(parsed.query)
+            serial = query.get("serial_no", [""])[0]
+            device_id = query.get("device_id", [None])[0]
+            shop_id = query.get("shop_id", [None])[0]
+            self.respond(200, {"ok": True, "data": self.server.store.pending_bindings(serial, device_id, shop_id)})
+            return
         if parsed.path == "/api/v1/account/members":
             user = self.user_auth()
             if user:
@@ -599,10 +723,35 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 return
             try:
-                result = self.server.store.bind_terminal(user["user_id"], self.body().get("serial_no"))
-                self.respond(201, {"ok": True, "data": result})
+                result = self.server.store.request_terminal_binding(user["user_id"], self.body().get("serial_no"))
+                self.respond(201, {"ok": True, "data": result, "message": "绑定请求已发送，请在安卓终端上确认"})
             except ValueError as exc:
                 self.respond(400, {"ok": False, "error": {"code": "BIND_FAILED", "message": str(exc)}})
+            return
+        if path == "/api/v1/terminal/binding-requests/respond":
+            try:
+                values = self.body()
+                approve = values.get("approve")
+                if type(approve) is not bool:
+                    raise ValueError("approve 必须是布尔值")
+                result = self.server.store.respond_binding(values.get("request_id"), values.get("serial_no"), values.get("device_id"), values.get("shop_id"), approve)
+                if approve:
+                    result["terminal_token"] = self.server.tokens["terminal"]
+                self.respond(200, {"ok": True, "data": result})
+            except ValueError as exc:
+                self.respond(400, {"ok": False, "error": {"code": "BINDING_RESPONSE_FAILED", "message": str(exc)}})
+            return
+        if path == "/api/v1/admin/users/update":
+            if not self.admin_auth():
+                return
+            try:
+                values = self.body()
+                if "balance_cents" not in values or "plan" not in values:
+                    raise ValueError("必须提供余额和套餐")
+                result = self.server.store.update_user_billing(values.get("user_id"), values.get("balance_cents"), values.get("plan"), values.get("plan_expires_at"))
+                self.respond(200, {"ok": True, "data": result})
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                self.respond(400, {"ok": False, "error": {"code": "INVALID_USER_BILLING", "message": str(exc)}})
             return
         if path == "/api/v1/account/services":
             user = self.user_auth()
@@ -660,6 +809,21 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(200, {"ok": True, "data": self.server.store.update_settings(self.body())})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self.respond(400, {"ok": False, "error": {"code": "INVALID_SETTINGS", "message": str(exc)}})
+
+    def do_PATCH(self):
+        if urlsplit(self.path).path != "/api/v1/admin/users/update":
+            self.respond(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "接口不存在"}})
+            return
+        if not self.admin_auth():
+            return
+        try:
+            values = self.body()
+            if "balance_cents" not in values or "plan" not in values:
+                raise ValueError("必须提供余额和套餐")
+            result = self.server.store.update_user_billing(values.get("user_id"), values.get("balance_cents"), values.get("plan"), values.get("plan_expires_at"))
+            self.respond(200, {"ok": True, "data": result})
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self.respond(400, {"ok": False, "error": {"code": "INVALID_USER_BILLING", "message": str(exc)}})
 
     def serve_static(self, name, content_type):
         path = (WEB_ROOT / name).resolve()

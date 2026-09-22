@@ -92,6 +92,6 @@ curl http://127.0.0.1:8787/healthz
 
 ## 账户接口与邮件配置
 
-账户页面为 `/account`。注册和登录接口分别为 `POST /api/v1/auth/register`、`POST /api/v1/auth/login`；登录后可使用 `GET /api/v1/account`、`POST /api/v1/account/terminals`、`GET /api/v1/account/members`、`POST /api/v1/account/services` 和 `POST /api/v1/account/message-campaigns`。终端绑定使用终端显示的 16 位序列号；会员和群发任务都按用户绑定的 `shop_id` 过滤。
+账户页面为 /account。注册和登录接口分别为 POST /api/v1/auth/register、POST /api/v1/auth/login；登录后可使用 GET /api/v1/account、POST /api/v1/account/terminals、GET /api/v1/account/members、POST /api/v1/account/services 和 POST /api/v1/account/message-campaigns。终端绑定接口只创建待确认请求：云端输入终端显示的 16 位序列号后，安卓终端轮询 GET /api/v1/terminal/binding-requests 并由店员通过 POST /api/v1/terminal/binding-requests/respond 同意或拒绝；同意后终端才取得同步令牌并建立用户绑定。管理员可在管理台设置每小时和每天的绑定请求上限；会员和群发任务都按用户绑定的 shop_id 过滤。
 
 注册邮件的 SMTP 服务器、端口、账号、授权码、发件人和 SSL 选项，请在根路径管理台的“云端设置”页面配置。小程序 AppID/AppSecret/模板 ID，以及公众号 AppID/AppSecret/Token/模板 ID 也在同一页面配置并保存到云端 SQLite；敏感值只返回配置状态。只有邮件发送成功后才返回注册成功提示，邮件正文包含用户注册的用户名。
